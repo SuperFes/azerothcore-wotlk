@@ -58,30 +58,35 @@ void WorldSession::HandleAddFriendOpcode(WorldPacket& recv_data)
     TeamId teamId = Player::TeamIdForRace(playerData->Race);
     FriendsResult friendResult = FRIEND_NOT_FOUND;
 
-    if (GetPlayer()->GetSession()->IsGMAccount() || HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) || AccountMgr::IsPlayerAccount(AccountMgr::GetSecurity(friendAccountId, realm.Id.Realm)))
+    bool isViewerGM = GetPlayer()->GetSession()->IsGMAccount();
+    bool isFriendGM = !AccountMgr::IsPlayerAccount(AccountMgr::GetSecurity(friendAccountId, realm.Id.Realm));
+    bool canAddGMFriend = isViewerGM || isFriendGM || HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND);
+
+    if (!isFriendGM || canAddGMFriend)
     {
         if (friendGuid)
         {
             if (friendGuid == GetPlayer()->GetGUID())
                 friendResult = FRIEND_SELF;
-            else if (GetPlayer()->GetTeamId() != teamId && !GetPlayer()->GetSession()->IsGMAccount() && !HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
+            else if (GetPlayer()->GetTeamId() != teamId && !isViewerGM && !HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
                 friendResult = FRIEND_ENEMY;
             else if (GetPlayer()->GetSocial()->HasFriend(friendGuid))
                 friendResult = FRIEND_ALREADY;
             else
             {
                 Player* pFriend = ObjectAccessor::FindConnectedPlayer(friendGuid);
-                bool isGMFriend = pFriend && pFriend->GetSession()->IsGMAccount();
-                bool canSeeGMFriend = GetPlayer()->GetSession()->IsGMAccount() || HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND);
+                bool pFriendIsGM = pFriend && pFriend->GetSession()->IsGMAccount();
+                bool canSeeGM = isViewerGM || HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND);
 
-                if (pFriend && (pFriend->IsVisibleGloballyFor(GetPlayer()) || (isGMFriend && canSeeGMFriend)))
+                if (pFriend && (!pFriendIsGM || canSeeGM))
                     friendResult = FRIEND_ADDED_ONLINE;
                 else
                     friendResult = FRIEND_ADDED_OFFLINE;
+
                 if (GetPlayer()->GetSocial()->AddToSocialList(friendGuid, SOCIAL_FLAG_FRIEND))
                     GetPlayer()->GetSocial()->SetFriendNote(friendGuid, friendNote);
                 else
-                friendResult = FRIEND_LIST_FULL;
+                    friendResult = FRIEND_LIST_FULL;
             }
             GetPlayer()->GetSocial()->SetFriendNote(friendGuid, friendNote);
         }

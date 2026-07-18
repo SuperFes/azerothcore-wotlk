@@ -214,7 +214,7 @@ void WorldSession::ValidateAccountFlags()
 
 bool WorldSession::IsGMAccount() const
 {
-    return GetSecurity() >= SEC_GAMEMASTER;
+    return GetSecurity() > SEC_PLAYER;
 }
 
 bool WorldSession::IsTrialAccount() const
