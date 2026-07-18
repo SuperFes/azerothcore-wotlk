@@ -259,7 +259,14 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
         friendInfo.Status = FRIEND_STATUS_AFK;
     if (pFriend->isDND())
         friendInfo.Status = FRIEND_STATUS_DND;
-    friendInfo.Area = pFriend->GetZoneId();
+
+    uint32 area = pFriend->GetZoneId();
+    if (!area)
+        area = pFriend->GetAreaId();
+    if (!area && pFriend->GetMap())
+        area = pFriend->GetMap()->GetZoneId(pFriend->GetPhaseMask(), pFriend->GetPositionX(), pFriend->GetPositionY(), pFriend->GetPositionZ());
+
+    friendInfo.Area = area;
     friendInfo.Level = pFriend->GetLevel();
     friendInfo.Class = pFriend->getClass();
 }
@@ -273,6 +280,12 @@ void SocialMgr::MakeFriendStatusPacket(FriendsResult result, ObjectGuid const& g
 
 void SocialMgr::SendFriendStatus(Player* player, FriendsResult result, ObjectGuid const& friendGuid, bool broadcast)
 {
+    if (broadcast)
+    {
+        BroadcastToFriendListers(player, &WorldPacket());
+        return;
+    }
+
     FriendInfo fi;
     GetFriendInfo(player, friendGuid, fi);
 
@@ -302,19 +315,13 @@ void SocialMgr::SendFriendStatus(Player* player, FriendsResult result, ObjectGui
             break;
     }
 
-    if (broadcast)
-        BroadcastToFriendListers(player, &data);
-    else
-        player->SendDirectMessage(&data);
+    player->SendDirectMessage(&data);
 }
 
-void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
+void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* /*packet*/)
 {
     if (!player)
         return;
-
-    TeamId teamId = player->GetTeamId();
-    AccountTypes gmLevelInWhoList = AccountTypes(sWorld->getIntConfig(CONFIG_GM_LEVEL_IN_WHO_LIST));
 
     for (auto const& itr : m_socialMap)
     {
@@ -325,26 +332,27 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
             if (!pFriend)
                 continue;
 
-            WorldSession* session = pFriend->GetSession();
-            bool isGMSubject = player->GetSession()->IsGMAccount();
-            bool isGMViewer = session->IsGMAccount();
-            bool allowGMFriend = isGMViewer ||
-                                 session->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) ||
-                                 session->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) ||
-                                 sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) ||
-                                 player->GetSession()->GetSecurity() <= gmLevelInWhoList;
+            FriendInfo fi;
+            GetFriendInfo(pFriend, player->GetGUID(), fi);
 
-            if (isGMSubject && !allowGMFriend)
-                continue;
+            WorldPacket data(SMSG_FRIEND_STATUS, 9);
+            data << uint8(fi.Status ? FRIEND_ONLINE : FRIEND_OFFLINE);
+            data << player->GetGUID();
 
-            bool allowCrossFaction = isGMSubject || isGMViewer ||
-                                     session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) ||
-                                     session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND);
+            switch (fi.Status ? FRIEND_ONLINE : FRIEND_OFFLINE)
+            {
+                case FRIEND_ADDED_ONLINE:
+                case FRIEND_ONLINE:
+                    data << uint8(fi.Status);
+                    data << uint32(fi.Area);
+                    data << uint32(fi.Level);
+                    data << uint32(fi.Class);
+                    break;
+                default:
+                    break;
+            }
 
-            if (pFriend->GetTeamId() != teamId && !allowCrossFaction)
-                continue;
-
-            pFriend->SendDirectMessage(packet);
+            pFriend->SendDirectMessage(&data);
         }
     }
 }
