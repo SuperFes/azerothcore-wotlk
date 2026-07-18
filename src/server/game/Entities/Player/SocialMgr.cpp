@@ -231,25 +231,30 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
     if (itr != player->GetSocial()->m_playerSocialMap.end())
         friendInfo.Note = itr->second.Note;
 
-    // PLAYER see his team only and PLAYER can't see MODERATOR, GAME MASTER, ADMINISTRATOR characters
-    // MODERATOR, GAME MASTER, ADMINISTRATOR can see all
-    if (pFriend->GetSession()->IsGMAccount())
-    {
-        if (!player->GetSession()->IsGMAccount() &&
-            !player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
-            !player->GetSession()->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) &&
-            !sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) &&
-            pFriend->GetSession()->GetSecurity() > gmLevelInWhoList)
-            return;
-    }
-    else if (!player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
+    bool isGMFriend = pFriend->GetSession()->IsGMAccount();
+    bool isViewerGM = player->GetSession()->IsGMAccount();
+    bool canSeeGMFriend = isViewerGM ||
+                          player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) ||
+                          player->GetSession()->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) ||
+                          sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) ||
+                          pFriend->GetSession()->GetSecurity() <= gmLevelInWhoList;
+
+    if (isGMFriend && !canSeeGMFriend)
+        return;
+
+    if (!isGMFriend && !player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
         pFriend->GetSession()->GetSecurity() > gmLevelInWhoList)
         return;
 
-    if (pFriend->GetTeamId() != teamId && !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST))
+    if (pFriend->GetTeamId() != teamId &&
+        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) &&
+        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND) &&
+        !sWorld->getBoolConfig(CONFIG_ALLOW_TWO_SIDE_ADD_FRIEND))
         return;
 
-    if (pFriend->IsVisibleGloballyFor(player))
+    bool isVisible = pFriend->IsVisibleGloballyFor(player) || (isGMFriend && canSeeGMFriend);
+
+    if (isVisible)
     {
         friendInfo.Status = FRIEND_STATUS_ONLINE;
         if (pFriend->isAFK())
@@ -333,10 +338,21 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
                 player->GetSession()->GetSecurity() > gmLevelInWhoList)
                 continue;
 
-            if (pFriend->GetTeamId() != teamId && !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST))
+            if (pFriend->GetTeamId() != teamId &&
+                !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) &&
+                !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND) &&
+                !sWorld->getBoolConfig(CONFIG_ALLOW_TWO_SIDE_ADD_FRIEND))
                 continue;
 
-            if (player->IsVisibleGloballyFor(pFriend))
+            bool isGMSubject = player->GetSession()->IsGMAccount();
+            bool canSee = player->IsVisibleGloballyFor(pFriend) ||
+                          (isGMSubject &&
+                           (session->IsGMAccount() ||
+                            session->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) ||
+                            session->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) ||
+                            sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND)));
+
+            if (canSee)
                 pFriend->SendDirectMessage(packet);
         }
     }

@@ -71,8 +71,10 @@ void WorldSession::HandleAddFriendOpcode(WorldPacket& recv_data)
             else
             {
                 Player* pFriend = ObjectAccessor::FindConnectedPlayer(friendGuid);
-                if (pFriend && pFriend->IsVisibleGloballyFor(GetPlayer()) &&
-                    (!pFriend->GetSession()->IsGMAccount() || GetPlayer()->GetSession()->IsGMAccount() || HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND)))
+                bool isGMFriend = pFriend && pFriend->GetSession()->IsGMAccount();
+                bool canSeeGMFriend = GetPlayer()->GetSession()->IsGMAccount() || HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND);
+
+                if (pFriend && (pFriend->IsVisibleGloballyFor(GetPlayer()) || (isGMFriend && canSeeGMFriend)))
                     friendResult = FRIEND_ADDED_ONLINE;
                 else
                     friendResult = FRIEND_ADDED_OFFLINE;
