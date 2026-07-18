@@ -282,7 +282,8 @@ void SocialMgr::SendFriendStatus(Player* player, FriendsResult result, ObjectGui
 {
     if (broadcast)
     {
-        BroadcastToFriendListers(player, &WorldPacket());
+        WorldPacket emptyData;
+        BroadcastToFriendListers(player, &emptyData);
         return;
     }
 
