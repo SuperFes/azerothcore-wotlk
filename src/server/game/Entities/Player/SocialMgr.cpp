@@ -242,13 +242,16 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
     if (isGMFriend && !canSeeGMFriend)
         return;
 
-    if (!isGMFriend && !player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
+    if (!isGMFriend && !isViewerGM &&
+        !player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
         pFriend->GetSession()->GetSecurity() > gmLevelInWhoList)
         return;
 
-    if (pFriend->GetTeamId() != teamId &&
-        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) &&
-        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
+    bool allowCrossFaction = isViewerGM || isGMFriend ||
+                             player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) ||
+                             player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND);
+
+    if (pFriend->GetTeamId() != teamId && !allowCrossFaction)
         return;
 
     bool isVisible = pFriend->IsVisibleGloballyFor(player) || (isGMFriend && canSeeGMFriend);
@@ -337,9 +340,13 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
                 player->GetSession()->GetSecurity() > gmLevelInWhoList)
                 continue;
 
-            if (pFriend->GetTeamId() != teamId &&
-                !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) &&
-                !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
+            bool isGMSubject = player->GetSession()->IsGMAccount();
+            bool isGMViewer = session->IsGMAccount();
+            bool allowCrossFaction = isGMSubject || isGMViewer ||
+                                     session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) ||
+                                     session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND);
+
+            if (pFriend->GetTeamId() != teamId && !allowCrossFaction)
                 continue;
 
             bool isGMSubject = player->GetSession()->IsGMAccount();
