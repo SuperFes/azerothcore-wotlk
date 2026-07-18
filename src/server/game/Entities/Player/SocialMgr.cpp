@@ -349,7 +349,6 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
             if (pFriend->GetTeamId() != teamId && !allowCrossFaction)
                 continue;
 
-            bool isGMSubject = player->GetSession()->IsGMAccount();
             bool canSee = player->IsVisibleGloballyFor(pFriend) ||
                           (isGMSubject &&
                            (session->IsGMAccount() ||
