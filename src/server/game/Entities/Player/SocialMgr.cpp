@@ -254,19 +254,14 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
     if (pFriend->GetTeamId() != teamId && !allowCrossFaction)
         return;
 
-    bool isVisible = pFriend->IsVisibleGloballyFor(player) || (isGMFriend && canSeeGMFriend);
-
-    if (isVisible)
-    {
-        friendInfo.Status = FRIEND_STATUS_ONLINE;
-        if (pFriend->isAFK())
-            friendInfo.Status = FRIEND_STATUS_AFK;
-        if (pFriend->isDND())
-            friendInfo.Status = FRIEND_STATUS_DND;
-        friendInfo.Area = pFriend->GetZoneId();
-        friendInfo.Level = pFriend->GetLevel();
-        friendInfo.Class = pFriend->getClass();
-    }
+    friendInfo.Status = FRIEND_STATUS_ONLINE;
+    if (pFriend->isAFK())
+        friendInfo.Status = FRIEND_STATUS_AFK;
+    if (pFriend->isDND())
+        friendInfo.Status = FRIEND_STATUS_DND;
+    friendInfo.Area = pFriend->GetZoneId();
+    friendInfo.Level = pFriend->GetLevel();
+    friendInfo.Class = pFriend->getClass();
 }
 
 void SocialMgr::MakeFriendStatusPacket(FriendsResult result, ObjectGuid const& guid, WorldPacket* data)
@@ -331,17 +326,17 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
                 continue;
 
             WorldSession* session = pFriend->GetSession();
-            // PLAYER see his team only and PLAYER can't see MODERATOR, GAME MASTER, ADMINISTRATOR characters
-            // MODERATOR, GAME MASTER, ADMINISTRATOR can see all
-            if (!session->IsGMAccount() &&
-                !session->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
-                !session->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) &&
-                !sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) &&
-                player->GetSession()->GetSecurity() > gmLevelInWhoList)
-                continue;
-
             bool isGMSubject = player->GetSession()->IsGMAccount();
             bool isGMViewer = session->IsGMAccount();
+            bool allowGMFriend = isGMViewer ||
+                                 session->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) ||
+                                 session->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) ||
+                                 sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) ||
+                                 player->GetSession()->GetSecurity() <= gmLevelInWhoList;
+
+            if (isGMSubject && !allowGMFriend)
+                continue;
+
             bool allowCrossFaction = isGMSubject || isGMViewer ||
                                      session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) ||
                                      session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND);
@@ -349,15 +344,7 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
             if (pFriend->GetTeamId() != teamId && !allowCrossFaction)
                 continue;
 
-            bool canSee = player->IsVisibleGloballyFor(pFriend) ||
-                          (isGMSubject &&
-                           (session->IsGMAccount() ||
-                            session->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) ||
-                            session->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) ||
-                            sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND)));
-
-            if (canSee)
-                pFriend->SendDirectMessage(packet);
+            pFriend->SendDirectMessage(packet);
         }
     }
 }
