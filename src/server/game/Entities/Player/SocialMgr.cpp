@@ -220,38 +220,28 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
     friendInfo.Level = 0;
     friendInfo.Class = 0;
 
-    Player* pFriend = ObjectAccessor::FindConnectedPlayer(friendGUID);
-    if (!pFriend)
-        return;
-
-    TeamId teamId = player->GetTeamId();
-    AccountTypes gmLevelInWhoList = AccountTypes(sWorld->getIntConfig(CONFIG_GM_LEVEL_IN_WHO_LIST));
-
     auto const& itr = player->GetSocial()->m_playerSocialMap.find(friendGUID);
     if (itr != player->GetSocial()->m_playerSocialMap.end())
         friendInfo.Note = itr->second.Note;
 
+    Player* pFriend = ObjectAccessor::FindConnectedPlayer(friendGUID);
+    if (!pFriend)
+        return;
+
     bool isGMFriend = pFriend->GetSession()->IsGMAccount();
     bool isViewerGM = player->GetSession()->IsGMAccount();
-    bool canSeeGMFriend = isViewerGM ||
-                          player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) ||
-                          player->GetSession()->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) ||
-                          sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) ||
-                          pFriend->GetSession()->GetSecurity() <= gmLevelInWhoList;
 
-    if (isGMFriend && !canSeeGMFriend)
-        return;
-
-    if (!isGMFriend && !isViewerGM &&
+    // GM visibility check: If target is GM and viewer is NOT a GM and GM.AllowFriend is disabled, hide GM.
+    if (isGMFriend && !isViewerGM &&
         !player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
-        pFriend->GetSession()->GetSecurity() > gmLevelInWhoList)
+        !player->GetSession()->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) &&
+        !sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND))
         return;
 
-    bool allowCrossFaction = isViewerGM || isGMFriend ||
-                             player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) ||
-                             player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND);
-
-    if (pFriend->GetTeamId() != teamId && !allowCrossFaction)
+    // Faction check: Non-GMs check cross-faction permissions. GMs can see friends across all factions.
+    if (pFriend->GetTeamId() != player->GetTeamId() && !isViewerGM && !isGMFriend &&
+        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) &&
+        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
         return;
 
     friendInfo.Status = FRIEND_STATUS_ONLINE;
