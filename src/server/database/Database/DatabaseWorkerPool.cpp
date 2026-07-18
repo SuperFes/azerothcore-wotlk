@@ -65,6 +65,18 @@ DatabaseWorkerPool<T>::DatabaseWorkerPool() :
 
     bool isSupportClientDB = mysql_get_client_version() >= MIN_MYSQL_CLIENT_VERSION;
     bool isSameClientDB = mysql_get_client_version() == MYSQL_VERSION_ID;
+
+    if (!isSupportClientDB)
+    {
+        LOG_WARN("sql.driver", "AzerothCore recommends MySQL client version 8.0 or newer. Found client version: {} / {}. Server compiled with: {}.",
+            mysql_get_client_info(), mysql_get_client_version(), MYSQL_VERSION_ID);
+    }
+
+    if (!isSameClientDB)
+    {
+        LOG_WARN("sql.driver", "Used MySQL library version ({} id {}) does not match the version id used to compile AzerothCore (id {}).",
+            mysql_get_client_info(), mysql_get_client_version(), MYSQL_VERSION_ID);
+    }
 }
 
 template <class T>
@@ -385,28 +397,29 @@ void DatabaseWorkerPool<T>::KeepAlive()
 */
 bool DatabaseIncompatibleVersion(std::string const mysqlVersion)
 {
-    // anon func to turn a version string into an array of uint8
-    // "1.2.3" => [1, 2, 3]
+    // Handle potential "5.5.5-10.x.x-MariaDB" legacy MariaDB prefix
+    std::string verStr = mysqlVersion;
+    if (verStr.rfind("5.5.5-", 0) == 0)
+        verStr = verStr.substr(6);
+
+    // Turn a version string into a vector of integer numbers ("10.11.2-MariaDB" => [10, 11, 2])
     auto parse = [](std::string const& input)
     {
-        std::vector<uint8> result;
+        std::vector<uint32> result;
         std::istringstream parser(input);
-        result.push_back(parser.get());
-        for (int i = 1; i < 3; i++)
+        uint32 val;
+        while (parser >> val)
         {
-            // Skip period
-            parser.get();
-            // Append int from parser to output
-            result.push_back(parser.get());
+            result.push_back(val);
+            if (parser.peek() == '.')
+                parser.ignore();
         }
         return result;
     };
 
-    // default to values for MySQL
-    uint8 offset = 0;
     std::string minVersion = MIN_MYSQL_SERVER_VERSION;
 
-    auto parsedMySQLVersion = parse(mysqlVersion.substr(offset));
+    auto parsedMySQLVersion = parse(verStr);
     auto parsedMinVersion = parse(minVersion);
 
     return std::lexicographical_compare(parsedMySQLVersion.begin(), parsedMySQLVersion.end(),
@@ -434,13 +447,18 @@ uint32 DatabaseWorkerPool<T>::OpenConnections(InternalIndex type, uint8 numConne
 
         if (uint32 error = connection->Open())
         {
-            // Failed to open a connection or invalid version, abort and cleanup
+            // Failed to open a connection, abort and cleanup
             _queue->Cancel();
             _connections[type].clear();
             return error;
         }
         else
         {
+            if (i == 0 && DatabaseIncompatibleVersion(connection->GetServerInfo()))
+            {
+                LOG_WARN("sql.driver", "AzerothCore recommends MySQL server version 8.0 or newer. Found server version: {}. Server compiled with: {}.",
+                    connection->GetServerInfo(), MYSQL_VERSION_ID);
+            }
             _connections[type].push_back(std::move(connection));
         }
     }
