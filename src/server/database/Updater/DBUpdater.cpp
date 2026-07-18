@@ -42,7 +42,11 @@ bool DBUpdaterUtil::CheckExecutable()
     std::filesystem::path exe(GetCorrectedMySQLExecutable());
     if (!is_regular_file(exe))
     {
-        exe = Acore::SearchExecutableInPath("mysql");
+        std::string targetExe = GetCorrectedMySQLExecutable();
+        if (targetExe.empty())
+            targetExe = "mysql";
+
+        exe = Acore::SearchExecutableInPath(targetExe);
         if (!exe.empty() && is_regular_file(exe))
         {
             // Correct the path to the cli
