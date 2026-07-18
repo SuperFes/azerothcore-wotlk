@@ -248,8 +248,7 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
 
     if (pFriend->GetTeamId() != teamId &&
         !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) &&
-        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND) &&
-        !sWorld->getBoolConfig(CONFIG_ALLOW_TWO_SIDE_ADD_FRIEND))
+        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
         return;
 
     bool isVisible = pFriend->IsVisibleGloballyFor(player) || (isGMFriend && canSeeGMFriend);
@@ -340,8 +339,7 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
 
             if (pFriend->GetTeamId() != teamId &&
                 !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) &&
-                !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND) &&
-                !sWorld->getBoolConfig(CONFIG_ALLOW_TWO_SIDE_ADD_FRIEND))
+                !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
                 continue;
 
             bool isGMSubject = player->GetSession()->IsGMAccount();
