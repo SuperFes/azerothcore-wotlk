@@ -408,7 +408,11 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket& recvData)
                     return;
                 }
 
-                if (!receiver || (lang != LANG_ADDON && !receiver->isAcceptWhispers() && receiver->GetSession()->HasPermission(rbac::RBAC_PERM_CAN_FILTER_WHISPERS) && !receiver->IsInWhisperWhiteList(sender->GetGUID())))
+                bool canBypassWhisperFilter = sender->GetSession()->IsGMAccount() ||
+                                              (receiver && receiver->GetSocial()->HasFriend(sender->GetGUID())) ||
+                                              (receiver && receiver->IsInWhisperWhiteList(sender->GetGUID()));
+
+                if (!receiver || (lang != LANG_ADDON && !receiver->isAcceptWhispers() && receiver->GetSession()->HasPermission(rbac::RBAC_PERM_CAN_FILTER_WHISPERS) && !canBypassWhisperFilter))
                 {
                     SendPlayerNotFoundNotice(to);
                     return;
