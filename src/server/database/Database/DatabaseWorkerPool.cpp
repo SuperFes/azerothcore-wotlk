@@ -65,11 +65,6 @@ DatabaseWorkerPool<T>::DatabaseWorkerPool() :
 
     bool isSupportClientDB = mysql_get_client_version() >= MIN_MYSQL_CLIENT_VERSION;
     bool isSameClientDB = mysql_get_client_version() == MYSQL_VERSION_ID;
-
-    WPFatal(isSupportClientDB, "AzerothCore does not support MySQL versions below 8.0\n\nFound version: {} / {}. Server compiled with: {}.\nSearch the wiki for ACE00043 in Common Errors (https://www.azerothcore.org/wiki/common-errors#ace00043).",
-        mysql_get_client_info(), mysql_get_client_version(), MYSQL_VERSION_ID);
-    WPFatal(isSameClientDB, "Used MySQL library version ({} id {}) does not match the version id used to compile AzerothCore (id {}).\nSearch the wiki for ACE00046 in Common Errors (https://www.azerothcore.org/wiki/common-errors#ace00046).",
-        mysql_get_client_info(), mysql_get_client_version(), MYSQL_VERSION_ID);
 }
 
 template <class T>
@@ -443,12 +438,6 @@ uint32 DatabaseWorkerPool<T>::OpenConnections(InternalIndex type, uint8 numConne
             _queue->Cancel();
             _connections[type].clear();
             return error;
-        }
-        else if (DatabaseIncompatibleVersion(connection->GetServerInfo()))
-        {
-            LOG_ERROR("sql.driver", "AzerothCore does not support MySQL versions below 8.0\n\nFound server version: {}. Server compiled with: {}.",
-                connection->GetServerInfo(), MYSQL_VERSION_ID);
-            return 1;
         }
         else
         {

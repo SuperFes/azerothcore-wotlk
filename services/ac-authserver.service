@@ -1,0 +1,15 @@
+[Unit]
+Description=AzerothCore Authserver
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=AzerothCore
+WorkingDirectory=/opt/AzerothCore
+ExecStart=/opt/AzerothCore/acore.sh run-authserver
+
+[Install]
+WantedBy=multi-user.target

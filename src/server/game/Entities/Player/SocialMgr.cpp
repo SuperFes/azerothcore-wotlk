@@ -221,7 +221,7 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
     friendInfo.Class = 0;
 
     Player* pFriend = ObjectAccessor::FindConnectedPlayer(friendGUID);
-    if (!pFriend || pFriend->GetSession()->IsGMAccount())
+    if (!pFriend)
         return;
 
     TeamId teamId = player->GetTeamId();
@@ -233,7 +233,16 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
 
     // PLAYER see his team only and PLAYER can't see MODERATOR, GAME MASTER, ADMINISTRATOR characters
     // MODERATOR, GAME MASTER, ADMINISTRATOR can see all
-    if (!player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
+    if (pFriend->GetSession()->IsGMAccount())
+    {
+        if (!player->GetSession()->IsGMAccount() &&
+            !player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
+            !player->GetSession()->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) &&
+            !sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) &&
+            pFriend->GetSession()->GetSecurity() > gmLevelInWhoList)
+            return;
+    }
+    else if (!player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
         pFriend->GetSession()->GetSecurity() > gmLevelInWhoList)
         return;
 
@@ -317,7 +326,11 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* packet)
             WorldSession* session = pFriend->GetSession();
             // PLAYER see his team only and PLAYER can't see MODERATOR, GAME MASTER, ADMINISTRATOR characters
             // MODERATOR, GAME MASTER, ADMINISTRATOR can see all
-            if (!session->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) && player->GetSession()->GetSecurity() > gmLevelInWhoList)
+            if (!session->IsGMAccount() &&
+                !session->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
+                !session->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) &&
+                !sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) &&
+                player->GetSession()->GetSecurity() > gmLevelInWhoList)
                 continue;
 
             if (pFriend->GetTeamId() != teamId && !session->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST))
