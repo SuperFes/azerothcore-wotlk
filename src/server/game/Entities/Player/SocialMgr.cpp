@@ -231,17 +231,23 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
     bool isGMFriend = pFriend->GetSession()->IsGMAccount();
     bool isViewerGM = player->GetSession()->IsGMAccount();
 
-    // GM visibility check: If target is GM and viewer is NOT a GM and GM.AllowFriend is disabled, hide GM.
-    if (isGMFriend && !isViewerGM &&
-        !player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) &&
-        !player->GetSession()->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) &&
-        !sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND))
+    // If GM.AllowFriend is enabled (CONFIG_ALLOW_GM_FRIEND == true), or viewer/target is GM or has permission,
+    // do NO GM-related restrictions on friends list visibility at all!
+    bool allowGMFriend = sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) ||
+                         isViewerGM ||
+                         isGMFriend ||
+                         player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) ||
+                         player->GetSession()->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND);
+
+    if (isGMFriend && !allowGMFriend)
         return;
 
-    // Faction check: Non-GMs check cross-faction permissions. GMs can see friends across all factions.
-    if (pFriend->GetTeamId() != player->GetTeamId() && !isViewerGM && !isGMFriend &&
-        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) &&
-        !player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
+    // Faction check: Allow cross-faction if GM.AllowFriend, viewer is GM, friend is GM, or cross-faction permissions set
+    bool allowCrossFaction = allowGMFriend ||
+                             player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) ||
+                             player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND);
+
+    if (pFriend->GetTeamId() != player->GetTeamId() && !allowCrossFaction)
         return;
 
     friendInfo.Status = FRIEND_STATUS_ONLINE;

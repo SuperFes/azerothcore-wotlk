@@ -60,25 +60,25 @@ void WorldSession::HandleAddFriendOpcode(WorldPacket& recv_data)
 
     bool isViewerGM = GetPlayer()->GetSession()->IsGMAccount();
     bool isFriendGM = !AccountMgr::IsPlayerAccount(AccountMgr::GetSecurity(friendAccountId, realm.Id.Realm));
-    bool canAddGMFriend = isViewerGM || isFriendGM || HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND);
+    bool allowGMFriend = sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) ||
+                         isViewerGM ||
+                         isFriendGM ||
+                         HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND);
 
-    if (!isFriendGM || canAddGMFriend)
+    if (!isFriendGM || allowGMFriend)
     {
         if (friendGuid)
         {
             if (friendGuid == GetPlayer()->GetGUID())
                 friendResult = FRIEND_SELF;
-            else if (GetPlayer()->GetTeamId() != teamId && !isViewerGM && !HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
+            else if (GetPlayer()->GetTeamId() != teamId && !allowGMFriend && !HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
                 friendResult = FRIEND_ENEMY;
             else if (GetPlayer()->GetSocial()->HasFriend(friendGuid))
                 friendResult = FRIEND_ALREADY;
             else
             {
                 Player* pFriend = ObjectAccessor::FindConnectedPlayer(friendGuid);
-                bool pFriendIsGM = pFriend && pFriend->GetSession()->IsGMAccount();
-                bool canSeeGM = isViewerGM || HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND);
-
-                if (pFriend && (!pFriendIsGM || canSeeGM))
+                if (pFriend)
                     friendResult = FRIEND_ADDED_ONLINE;
                 else
                     friendResult = FRIEND_ADDED_OFFLINE;
