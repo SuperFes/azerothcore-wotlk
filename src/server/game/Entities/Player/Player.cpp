@@ -2275,6 +2275,9 @@ void Player::SetGMVisible(bool on)
         m_ExtraFlags |= PLAYER_EXTRA_GM_INVISIBLE;
         SetServerSideVisibility(SERVERSIDE_VISIBILITY_GM, GetSession()->GetSecurity());
     }
+
+    if (IsInWorld())
+        sSocialMgr->SendFriendStatus(this, isGMVisible() ? FRIEND_ONLINE : FRIEND_OFFLINE, GetGUID(), true);
 }
 
 bool Player::IsGroupVisibleFor(Player const* p) const

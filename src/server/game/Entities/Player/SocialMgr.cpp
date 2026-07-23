@@ -231,19 +231,22 @@ void SocialMgr::GetFriendInfo(Player* player, ObjectGuid const& friendGUID, Frie
     bool isGMFriend = pFriend->GetSession()->IsGMAccount();
     bool isViewerGM = player->GetSession()->IsGMAccount();
 
-    // If GM.AllowFriend is enabled (CONFIG_ALLOW_GM_FRIEND == true), or viewer/target is GM or has permission,
-    // do NO GM-related restrictions on friends list visibility at all!
+    // If GM.AllowFriend is enabled (CONFIG_ALLOW_GM_FRIEND == true), or viewer is GM or has permission,
+    // allow GM friends list visibility
     bool allowGMFriend = sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) ||
                          isViewerGM ||
-                         isGMFriend ||
                          player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) ||
                          player->GetSession()->HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND);
 
     if (isGMFriend && !allowGMFriend)
         return;
 
+    if (isGMFriend && !pFriend->isGMVisible() && !isViewerGM && !player->GetSession()->HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS))
+        return;
+
     // Faction check: Allow cross-faction if GM.AllowFriend, viewer is GM, friend is GM, or cross-faction permissions set
     bool allowCrossFaction = allowGMFriend ||
+                             isGMFriend ||
                              player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST) ||
                              player->GetSession()->HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND);
 

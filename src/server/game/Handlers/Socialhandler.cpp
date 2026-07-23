@@ -62,7 +62,6 @@ void WorldSession::HandleAddFriendOpcode(WorldPacket& recv_data)
     bool isFriendGM = !AccountMgr::IsPlayerAccount(AccountMgr::GetSecurity(friendAccountId, realm.Id.Realm));
     bool allowGMFriend = sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) ||
                          isViewerGM ||
-                         isFriendGM ||
                          HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND);
 
     if (!isFriendGM || allowGMFriend)
@@ -79,7 +78,13 @@ void WorldSession::HandleAddFriendOpcode(WorldPacket& recv_data)
             {
                 Player* pFriend = ObjectAccessor::FindConnectedPlayer(friendGuid);
                 if (pFriend)
-                    friendResult = FRIEND_ADDED_ONLINE;
+                {
+                    bool isGMFriend = pFriend->GetSession()->IsGMAccount();
+                    if (isGMFriend && !pFriend->isGMVisible() && !isViewerGM && !HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS))
+                        friendResult = FRIEND_ADDED_OFFLINE;
+                    else
+                        friendResult = FRIEND_ADDED_ONLINE;
+                }
                 else
                     friendResult = FRIEND_ADDED_OFFLINE;
 
