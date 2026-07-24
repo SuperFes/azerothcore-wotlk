@@ -281,6 +281,11 @@ void SocialMgr::SendFriendStatus(Player* player, FriendsResult result, ObjectGui
 {
     if (broadcast)
     {
+        // Do not broadcast friend-status events for bot logins/logouts — bots churn
+        // constantly and would spam real players with unsolicited notifications.
+        if (player && player->GetSession() && player->GetSession()->IsBot())
+            return;
+
         WorldPacket emptyData;
         BroadcastToFriendListers(player, &emptyData);
         return;
@@ -330,6 +335,11 @@ void SocialMgr::BroadcastToFriendListers(Player* player, WorldPacket* /*packet*/
         {
             Player* pFriend = ObjectAccessor::FindPlayer(itr.first);
             if (!pFriend)
+                continue;
+
+            // Do not send bot-side friend notifications to real players — bots log
+            // in and out constantly and would flood chat with unsolicited messages.
+            if (pFriend->GetSession() && pFriend->GetSession()->IsBot())
                 continue;
 
             FriendInfo fi;
