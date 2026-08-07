@@ -1958,6 +1958,16 @@ void Creature::setDeathState(DeathState state, bool despawn)
     {
         m_corpseRemoveTime = GameTime::GetGameTime().count() + m_corpseDelay;
         uint32 dynamicRespawnDelay = GetMap()->ApplyDynamicModeRespawnScaling(this, m_respawnDelay);
+
+        // Apply a random ±jitter to break synchronised respawn waves.
+        // Jitter is a fraction of the scaled delay, e.g. 0.2 → ±20%.
+        float const jitterPct = sWorld->getFloatConfig(CONFIG_RESPAWN_JITTER_PCT);
+        if (jitterPct > 0.0f && dynamicRespawnDelay > 0)
+        {
+            int32 const jitter = static_cast<int32>(dynamicRespawnDelay * jitterPct);
+            dynamicRespawnDelay = static_cast<uint32>(std::max(1, static_cast<int32>(dynamicRespawnDelay) + irand(-jitter, jitter)));
+        }
+
         m_respawnTime = GameTime::GetGameTime().count() + dynamicRespawnDelay + m_corpseDelay;
 
         // always save boss respawn time at death to prevent crash cheating

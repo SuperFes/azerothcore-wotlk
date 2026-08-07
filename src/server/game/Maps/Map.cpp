@@ -1751,6 +1751,11 @@ uint32 Map::ApplyDynamicModeRespawnScaling(WorldObject const* obj, uint32 respaw
             || (creature->GetCreatureTemplate()->rank == CREATURE_ELITE_RARE)
             || (creature->GetCreatureTemplate()->rank == CREATURE_ELITE_RAREELITE))
             return respawnDelay;
+
+        // Idea 6: Elite creatures scale at half the rate of normal mobs so they
+        // still feel significant even when many players are nearby.
+        if (creature->GetCreatureTemplate()->rank == CREATURE_ELITE_ELITE)
+            rate *= 0.5f;
     }
     // Temporary gameobjects (no DB spawn id) are likewise excluded.
     else if (GameObject const* go = obj->ToGameObject())
@@ -1759,13 +1764,35 @@ uint32 Map::ApplyDynamicModeRespawnScaling(WorldObject const* obj, uint32 respaw
             return respawnDelay;
     }
 
-    auto it = _zonePlayerCountMap.find(obj->GetZoneId());
-    if (it == _zonePlayerCountMap.end())
+    double effectiveCount = 0.0;
+    float const radius = sWorld->getFloatConfig(CONFIG_RESPAWN_DYNAMIC_RADIUS);
+    if (radius > 0.0f)
+    {
+        // Idea 5: Distance falloff — each player contributes (1 - dist/radius),
+        // so players right on top of the mob count fully while those near the
+        // edge of the radius barely count at all.
+        for (auto const& ref : m_mapRefMgr)
+        {
+            Player const* player = ref.GetSource();
+            if (!player || !player->IsAlive())
+                continue;
+            float dist = obj->GetDistance(player);
+            if (dist < radius)
+                effectiveCount += 1.0 - (dist / radius);
+        }
+    }
+    else
+    {
+        // Fall back to zone-wide player count.
+        auto it = _zonePlayerCountMap.find(obj->GetZoneId());
+        if (it == _zonePlayerCountMap.end())
+            return respawnDelay;
+        effectiveCount = it->second;
+    }
+
+    if (effectiveCount <= 0.0)
         return respawnDelay;
-    uint32 const playerCount = it->second;
-    if (!playerCount)
-        return respawnDelay;
-    double const adjustFactor =  rate / playerCount;
+    double const adjustFactor = rate / effectiveCount;
     if (adjustFactor >= 1.0) // nothing to do here
         return respawnDelay;
     uint32 const timeMinimum = sWorld->getIntConfig(obj->IsGameObject() ? CONFIG_RESPAWN_DYNAMICMINIMUM_GAMEOBJECT : CONFIG_RESPAWN_DYNAMICMINIMUM_CREATURE);
@@ -2804,6 +2831,48 @@ void Map::ProcessCreatureRespawn(ObjectGuid::LowType spawnId)
         time_t newRespawnTime = (now > linkedRespawntime ? now : linkedRespawntime) + urand(5, MINUTE);
         SaveCreatureRespawnTime(spawnId, newRespawnTime);
         return;
+    }
+
+    // Idea 2 & 4: Locality checks — only active when Respawn.DynamicRadius > 0.
+    float const dynamicRadius = sWorld->getFloatConfig(CONFIG_RESPAWN_DYNAMIC_RADIUS);
+    if (dynamicRadius > 0.0f)
+    {
+        // Walk the player list once to classify the area.
+        bool anyNearby  = false;
+        bool anyCombat  = false;
+        for (auto const& ref : m_mapRefMgr)
+        {
+            Player const* player = ref.GetSource();
+            if (!player || !player->IsAlive())
+                continue;
+            float dx = player->GetPositionX() - data->posX;
+            float dy = player->GetPositionY() - data->posY;
+            float dz = player->GetPositionZ() - data->posZ;
+            if (std::sqrt(dx * dx + dy * dy + dz * dz) <= dynamicRadius)
+            {
+                anyNearby = true;
+                if (player->IsInCombat())
+                    anyCombat = true;
+            }
+        }
+
+        if (!anyNearby)
+        {
+            // Idea 2 — Idle bleed-back: the area is empty; don't spawn yet.
+            // Re-queue and check again after the configured idle interval.
+            uint32 const idleInterval = sWorld->getIntConfig(CONFIG_RESPAWN_IDLE_CHECK_INTERVAL);
+            _respawnQueue.insert({GameTime::GetGameTime().count() + idleInterval, SPAWN_TYPE_CREATURE, spawnId});
+            return;
+        }
+
+        if (anyCombat)
+        {
+            // Idea 4 — Combat-aware delay: players are nearby but still fighting.
+            // Defer a short time so the creature doesn't materialise mid-fight.
+            uint32 const combatDelay = sWorld->getIntConfig(CONFIG_RESPAWN_COMBAT_CHECK_DELAY);
+            _respawnQueue.insert({GameTime::GetGameTime().count() + combatDelay, SPAWN_TYPE_CREATURE, spawnId});
+            return;
+        }
     }
 
     // Remove respawn time BEFORE LoadFromDB, otherwise the creature

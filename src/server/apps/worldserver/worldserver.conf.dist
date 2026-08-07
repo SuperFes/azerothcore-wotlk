@@ -4851,6 +4851,55 @@ Respawn.DynamicRateGameObject = 1
 Respawn.DynamicMinimumGameObject = 10
 
 #
+#    Respawn.DynamicRadius
+#        Description: When set to a value greater than 0, the player count used for dynamic respawn
+#                     scaling is computed by counting players (and bots) within this radius (in yards)
+#                     of the dying creature or gameobject, rather than using the zone-wide player count.
+#                     This makes respawn scaling local to where the action is actually happening:
+#                     mobs being fought nearby will respawn faster, while mobs in empty parts of the
+#                     same zone respawn at their normal rate.
+#                     Set to 0 to use the original zone-wide player count (legacy behaviour).
+#        Default:     0 - (Disabled, use zone-wide count)
+
+Respawn.DynamicRadius = 0
+
+#
+#    Respawn.JitterPct
+#        Description: Applies a random ±variance to every creature respawn delay, expressed as a
+#                     fraction of the delay (e.g. 0.2 = ±20%). This staggers the respawn times of
+#                     mobs killed at the same moment, breaking the robotic synchronised-wave effect
+#                     that is especially obvious in solo or bot play.
+#                     Applied after all dynamic scaling, so the minimum respawn floor is still respected
+#                     (the result is clamped to at least 1 second).
+#                     Set to 0 to disable.
+#        Default:     0 - (Disabled)
+
+Respawn.JitterPct = 0
+
+#
+#    Respawn.IdleCheckInterval
+#        Description: When Respawn.DynamicRadius > 0, a creature whose respawn timer has expired
+#                     will not actually spawn if no players are within the radius of its spawn
+#                     position. Instead it re-queues itself and checks again after this many seconds.
+#                     Once a player enters the radius the creature spawns on the next check.
+#                     This prevents cleared areas from refilling before anyone returns.
+#                     Has no effect when Respawn.DynamicRadius = 0.
+#        Default:     30 - (30 seconds)
+
+Respawn.IdleCheckInterval = 30
+
+#
+#    Respawn.CombatCheckDelay
+#        Description: When Respawn.DynamicRadius > 0, a creature whose respawn timer has expired
+#                     will defer by this many seconds if any player within the radius is currently
+#                     in combat. This prevents mobs from materialising in the middle of an
+#                     ongoing fight. The check repeats until the area is combat-free.
+#                     Has no effect when Respawn.DynamicRadius = 0.
+#        Default:     10 - (10 seconds)
+
+Respawn.CombatCheckDelay = 10
+
+#
 #    Respawn.DynamicEscortNPC
 #        Description: Enable dynamic respawn behavior for escort quest NPCs.
 #                     When enabled, escort NPCs in spawn groups flagged as ESCORTQUESTNPC

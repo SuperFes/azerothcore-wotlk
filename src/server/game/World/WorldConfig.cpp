@@ -543,6 +543,10 @@ void WorldConfig::BuildConfigCache()
 
     SetConfigValue<float>(CONFIG_RESPAWN_DYNAMICRATE_GAMEOBJECT, "Respawn.DynamicRateGameObject", 1.0f);
     SetConfigValue<uint32>(CONFIG_RESPAWN_DYNAMICMINIMUM_GAMEOBJECT, "Respawn.DynamicMinimumGameObject", 10);
+    SetConfigValue<float>(CONFIG_RESPAWN_DYNAMIC_RADIUS, "Respawn.DynamicRadius", 0.0f);
+    SetConfigValue<float>(CONFIG_RESPAWN_JITTER_PCT, "Respawn.JitterPct", 0.0f);
+    SetConfigValue<uint32>(CONFIG_RESPAWN_IDLE_CHECK_INTERVAL, "Respawn.IdleCheckInterval", 30);
+    SetConfigValue<uint32>(CONFIG_RESPAWN_COMBAT_CHECK_DELAY, "Respawn.CombatCheckDelay", 10);
     SetConfigValue<bool>(CONFIG_RESPAWN_DYNAMIC_ESCORTNPC, "Respawn.DynamicEscortNPC", false);
     SetConfigValue<bool>(CONFIG_RESPAWN_FORCE_COMPATIBILITY_MODE, "Respawn.ForceCompatibilityMode", false);
 
