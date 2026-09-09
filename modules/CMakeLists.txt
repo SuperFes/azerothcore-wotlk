@@ -38,6 +38,7 @@ set("AC_SCRIPTS_LIST" "")
 set(MOD_ALE_FOUND 0)
 set(MOD_ALE_PATH "")
 set(MOD_PLAYERBOTS_FOUND 0)
+set(MOD_TRANSMOG_FOUND 0)
 
 foreach(include ${AC_ADD_SCRIPTS_INCLUDE})
   set("AC_SCRIPTS_INCLUDES" "#include \"${include}\"\n${AC_SCRIPTS_INCLUDES}")
@@ -80,6 +81,10 @@ foreach(SOURCE_MODULE ${MODULES_MODULE_LIST})
   # Use only static for mod-ALE
   if (SOURCE_MODULE MATCHES "mod-ale")
     ConfigureALEModule(${SOURCE_MODULE})
+  endif()
+
+  if (SOURCE_MODULE MATCHES "mod-transmog")
+    set(MOD_TRANSMOG_FOUND 1)
   endif()
 
   if (SOURCE_MODULE MATCHES "mod-playerbots")
@@ -379,6 +384,13 @@ if (MOD_PLAYERBOTS_FOUND)
     target_compile_options(modules
             PRIVATE
             -DMOD_PLAYERBOTS)
+endif()
+
+# Lets mod-playerbots use transmog when it is present without depending on it.
+if (MOD_TRANSMOG_FOUND)
+    target_compile_options(modules
+            PRIVATE
+            -DMOD_TRANSMOG)
 endif()
 
 if (MOD_ALE_FOUND)

@@ -1194,20 +1194,21 @@ struct ItemBagFamilyEntry
     //                                                      // 17       name flags
 };
 
+#define MAX_ITEM_DISPLAY_TEXTURES 8
+
 struct ItemDisplayInfoEntry
 {
     uint32      ID;                                         // 0        m_ID
-    // 1        m_modelName[2]
-    // 2        m_modelTexture[2]
-    char const*       inventoryIcon;                        // 3        m_inventoryIcon
-    // 4        m_geosetGroup[3]
-    // 5        m_flags
-    // 6        m_spellVisualID
-    // 7        m_groupSoundIndex
-    // 8        m_helmetGeosetVis[2]
-    // 9        m_texture[2]
-    // 10       m_itemVisual[8]
-    // 11       m_particleColorID
+    // 1-2      m_modelName[2]
+    char const*       modelTexture;                         // 3        m_modelTexture[0]
+    // 4        m_modelTexture[1]
+    char const*       inventoryIcon;                        // 5        m_inventoryIcon
+    // 6-14     m_geosetGroup[3], m_flags, m_spellVisualID, m_groupSoundIndex, m_helmetGeosetVis[2]
+    // Armour geoset textures, e.g. "Plate_B_02Red_Glove_AL": material, look family, variant,
+    // colour, then the body region. Which entries are populated depends on the slot, so callers
+    // should take the first non-empty one. Weapons and held items use modelTexture above instead.
+    char const*       texture[MAX_ITEM_DISPLAY_TEXTURES];   // 15-22    m_texture
+    // 23-24    m_itemVisual[8], m_particleColorID
 };
 
 //struct ItemCondExtCostsEntry
