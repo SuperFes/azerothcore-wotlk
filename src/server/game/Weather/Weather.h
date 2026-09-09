@@ -79,8 +79,11 @@ public:
     [[nodiscard]] uint32 GetZone() const { return m_zone; };
     [[nodiscard]] uint32 GetScriptId() const { return m_weatherChances->ScriptId; }
 
-private:
+    /// Current conditions, derived from type and intensity. Public so callers can react to the
+    /// weather rather than only set it.
     [[nodiscard]] WeatherState GetWeatherState() const;
+
+private:
     Map* m_map;
     uint32 m_zone;
     WeatherType m_type;
