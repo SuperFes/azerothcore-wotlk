@@ -463,8 +463,8 @@ void Creature::RemoveCorpse(bool setSpawnTime, bool skipVisibility)
         // Always save respawn time in non-compat mode since the creature is being
         // destroyed — ProcessRespawns() needs the entry to know when to recreate it.
         // m_respawnTime was already set in setDeathState(JustDied).
-        if (setSpawnTime)
-            m_respawnTime = std::max<time_t>(GameTime::GetGameTime().count() + respawnDelay, m_respawnTime);
+        if (setSpawnTime && m_respawnTime <= GameTime::GetGameTime().count())
+            m_respawnTime = GameTime::GetGameTime().count() + respawnDelay;
         SaveRespawnTime();
 
         AddObjectToRemoveList();
@@ -1961,7 +1961,10 @@ void Creature::setDeathState(DeathState state, bool despawn)
 
         // Apply a random ±jitter to break synchronised respawn waves.
         // Jitter is a fraction of the scaled delay, e.g. 0.2 → ±20%.
-        float const jitterPct = sWorld->getFloatConfig(CONFIG_RESPAWN_JITTER_PCT);
+        float jitterPct = sWorld->getFloatConfig(CONFIG_RESPAWN_JITTER_PCT);
+        if (jitterPct > 1.0f)
+            jitterPct /= 100.0f;
+
         if (jitterPct > 0.0f && dynamicRespawnDelay > 0)
         {
             int32 const jitter = static_cast<int32>(dynamicRespawnDelay * jitterPct);

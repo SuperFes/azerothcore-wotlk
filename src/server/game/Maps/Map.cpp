@@ -1719,7 +1719,6 @@ void Map::SendObjectUpdates()
             continue;
         }
 
-
         iter->second.BuildPacket(packet);
         iter->first->SendDirectMessage(&packet);
         packet.clear();                                     // clean the string
@@ -1764,11 +1763,21 @@ uint32 Map::ApplyDynamicModeRespawnScaling(WorldObject const* obj, uint32 respaw
             return respawnDelay;
     }
 
+    uint32 localPlayerCount = 0;
     double effectiveCount = 0.0;
     float const radius = sWorld->getFloatConfig(CONFIG_RESPAWN_DYNAMIC_RADIUS);
     if (radius > 0.0f)
     {
-        // Idea 5: Distance falloff — each player contributes (1 - dist/radius),
+        uint32 zonePlayerCount = 0;
+        auto it = _zonePlayerCountMap.find(obj->GetZoneId());
+        if (it != _zonePlayerCountMap.end())
+            zonePlayerCount = it->second;
+
+        float currentRadius = radius;
+        if (zonePlayerCount > 1)
+            currentRadius = std::max(20.0f, radius / std::sqrt(static_cast<float>(zonePlayerCount)));
+
+        // Idea 5: Distance falloff — each player contributes (1 - dist/currentRadius),
         // so players right on top of the mob count fully while those near the
         // edge of the radius barely count at all.
         for (auto const& ref : m_mapRefMgr)
@@ -1777,8 +1786,11 @@ uint32 Map::ApplyDynamicModeRespawnScaling(WorldObject const* obj, uint32 respaw
             if (!player || !player->IsAlive())
                 continue;
             float dist = obj->GetDistance(player);
-            if (dist < radius)
-                effectiveCount += 1.0 - (dist / radius);
+            if (dist < currentRadius)
+            {
+                effectiveCount += 1.0 - (dist / currentRadius);
+                ++localPlayerCount;
+            }
         }
     }
     else
@@ -1788,9 +1800,10 @@ uint32 Map::ApplyDynamicModeRespawnScaling(WorldObject const* obj, uint32 respaw
         if (it == _zonePlayerCountMap.end())
             return respawnDelay;
         effectiveCount = it->second;
+        localPlayerCount = it->second;
     }
 
-    if (effectiveCount <= 0.0)
+    if (localPlayerCount <= 1 || effectiveCount <= 0.0)
         return respawnDelay;
     double const adjustFactor = rate / effectiveCount;
     if (adjustFactor >= 1.0) // nothing to do here
@@ -2441,6 +2454,10 @@ void Map::SaveCreatureRespawnTime(ObjectGuid::LowType spawnId, time_t& respawnTi
     if (GetInstanceResetPeriod() > 0 && respawnTime - now + 5 >= GetInstanceResetPeriod())
         respawnTime = now + YEAR;
 
+    // Record the death time when the creature first dies.
+    if (_creatureDeathTimes.find(spawnId) == _creatureDeathTimes.end())
+        _creatureDeathTimes[spawnId] = now;
+
     // Remove old queue entry if updating an existing respawn time
     auto itr = _creatureRespawnTimes.find(spawnId);
     if (itr != _creatureRespawnTimes.end())
@@ -2459,6 +2476,8 @@ void Map::SaveCreatureRespawnTime(ObjectGuid::LowType spawnId, time_t& respawnTi
 
 void Map::RemoveCreatureRespawnTime(ObjectGuid::LowType spawnId)
 {
+    _creatureDeathTimes.erase(spawnId);
+
     auto itr = _creatureRespawnTimes.find(spawnId);
     if (itr != _creatureRespawnTimes.end())
     {
@@ -2556,6 +2575,7 @@ void Map::LoadRespawnTimes()
 void Map::DeleteRespawnTimes()
 {
     _creatureRespawnTimes.clear();
+    _creatureDeathTimes.clear();
     _goRespawnTimes.clear();
     _respawnQueue.clear();
 
@@ -2833,13 +2853,54 @@ void Map::ProcessCreatureRespawn(ObjectGuid::LowType spawnId)
         return;
     }
 
-    // Idea 2 & 4: Locality checks — only active when Respawn.DynamicRadius > 0.
+    // Dynamic respawn recalculation and locality checks — only active when Respawn.DynamicRadius > 0.
     float const dynamicRadius = sWorld->getFloatConfig(CONFIG_RESPAWN_DYNAMIC_RADIUS);
     if (dynamicRadius > 0.0f)
     {
-        // Walk the player list once to classify the area.
-        bool anyNearby  = false;
-        bool anyCombat  = false;
+        uint32 const zoneId = GetZoneId(data->phaseMask, data->posX, data->posY, data->posZ);
+        uint32 zonePlayerCount = 0;
+        auto it = _zonePlayerCountMap.find(zoneId);
+        if (it != _zonePlayerCountMap.end())
+            zonePlayerCount = it->second;
+
+        float currentRadius = dynamicRadius;
+        if (zonePlayerCount > 1)
+            currentRadius = std::max(20.0f, dynamicRadius / std::sqrt(static_cast<float>(zonePlayerCount)));
+
+        CreatureTemplate const* creatureTemplate = sObjectMgr->GetCreatureTemplate(data->id);
+        uint32 corpseDelay = sWorld->getIntConfig(CONFIG_CORPSE_DECAY_NORMAL);
+        if (creatureTemplate)
+        {
+            if (creatureTemplate->rank == CREATURE_ELITE_RARE)
+                corpseDelay = sWorld->getIntConfig(CONFIG_CORPSE_DECAY_RARE);
+            else if (creatureTemplate->rank == CREATURE_ELITE_ELITE)
+                corpseDelay = sWorld->getIntConfig(CONFIG_CORPSE_DECAY_ELITE);
+            else if (creatureTemplate->rank == CREATURE_ELITE_RAREELITE)
+                corpseDelay = sWorld->getIntConfig(CONFIG_CORPSE_DECAY_RAREELITE);
+            else if (creatureTemplate->rank == CREATURE_ELITE_WORLDBOSS)
+                corpseDelay = sWorld->getIntConfig(CONFIG_CORPSE_DECAY_WORLDBOSS);
+        }
+
+        // Determine death time and maximum unscaled respawn time
+        time_t now = GameTime::GetGameTime().count();
+        time_t deathTime = 0;
+        auto deathItr = _creatureDeathTimes.find(spawnId);
+        if (deathItr != _creatureDeathTimes.end())
+            deathTime = deathItr->second;
+        else
+        {
+            time_t scheduledTime = GetCreatureRespawnTime(spawnId);
+            if (scheduledTime)
+                deathTime = scheduledTime - data->spawntimesecs - corpseDelay;
+            else
+                deathTime = now - data->spawntimesecs - corpseDelay;
+        }
+
+        time_t const maxTargetTime = deathTime + data->spawntimesecs + corpseDelay;
+
+        double effectiveCount = 0.0;
+        uint32 localPlayerCount = 0;
+
         for (auto const& ref : m_mapRefMgr)
         {
             Player const* player = ref.GetSource();
@@ -2848,27 +2909,76 @@ void Map::ProcessCreatureRespawn(ObjectGuid::LowType spawnId)
             float dx = player->GetPositionX() - data->posX;
             float dy = player->GetPositionY() - data->posY;
             float dz = player->GetPositionZ() - data->posZ;
-            if (std::sqrt(dx * dx + dy * dy + dz * dz) <= dynamicRadius)
+            float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (dist < currentRadius)
             {
-                anyNearby = true;
-                if (player->IsInCombat())
-                    anyCombat = true;
+                effectiveCount += 1.0 - (dist / currentRadius);
+                ++localPlayerCount;
             }
         }
 
-        if (!anyNearby)
+        if (localPlayerCount == 0)
         {
-            // Idea 2 — Idle bleed-back: the area is empty; don't spawn yet.
-            // Re-queue and check again after the configured idle interval.
-            uint32 const idleInterval = sWorld->getIntConfig(CONFIG_RESPAWN_IDLE_CHECK_INTERVAL);
-            _respawnQueue.insert({GameTime::GetGameTime().count() + idleInterval, SPAWN_TYPE_CREATURE, spawnId});
-            return;
+            // If there are players in the zone, we do not delay the respawn.
+            // If the zone is completely empty, we apply idle bleed-back up to maxTargetTime.
+            if (zonePlayerCount == 0 && now < maxTargetTime)
+            {
+                uint32 const idleInterval = sWorld->getIntConfig(CONFIG_RESPAWN_IDLE_CHECK_INTERVAL);
+                time_t newRespawnTime = std::min<time_t>(now + idleInterval, maxTargetTime);
+                SaveCreatureRespawnTime(spawnId, newRespawnTime);
+                return;
+            }
+        }
+        else
+        {
+            // Recalculate target respawn time based on the current player count.
+            float rate = sWorld->getFloatConfig(CONFIG_RESPAWN_DYNAMICRATE_CREATURE);
+            if (creatureTemplate && creatureTemplate->rank == CREATURE_ELITE_ELITE)
+                rate *= 0.5f;
+
+            uint32 desiredDelay = data->spawntimesecs;
+            if (rate != 1.0f && localPlayerCount > 1 && effectiveCount > 0.0)
+            {
+                double const adjustFactor = rate / effectiveCount;
+                if (adjustFactor < 1.0)
+                {
+                    uint32 const timeMinimum = sWorld->getIntConfig(CONFIG_RESPAWN_DYNAMICMINIMUM_CREATURE);
+                    desiredDelay = std::max<uint32>(std::ceil(data->spawntimesecs * adjustFactor), timeMinimum);
+                }
+            }
+
+            time_t const targetTime = deathTime + desiredDelay + corpseDelay;
+            if (targetTime > now)
+            {
+                // Dynamically go back down: players have left or decreased, so we delay the respawn.
+                // We check again in standard check interval or when target time is reached.
+                uint32 const idleInterval = sWorld->getIntConfig(CONFIG_RESPAWN_IDLE_CHECK_INTERVAL);
+                time_t newRespawnTime = std::min<time_t>(now + idleInterval, targetTime);
+                SaveCreatureRespawnTime(spawnId, newRespawnTime);
+                return;
+            }
         }
 
-        if (anyCombat)
+        // Combat-aware delay: if players are in combat very close (within 25 yards/meters) of the spawn point,
+        // defer spawning to avoid materializing the creature directly on top of them mid-fight.
+        bool anyCombatNearby = false;
+        for (auto const& ref : m_mapRefMgr)
         {
-            // Idea 4 — Combat-aware delay: players are nearby but still fighting.
-            // Defer a short time so the creature doesn't materialise mid-fight.
+            Player const* player = ref.GetSource();
+            if (!player || !player->IsAlive() || !player->IsInCombat())
+                continue;
+            float dx = player->GetPositionX() - data->posX;
+            float dy = player->GetPositionY() - data->posY;
+            float dz = player->GetPositionZ() - data->posZ;
+            if (std::sqrt(dx * dx + dy * dy + dz * dz) <= 25.0f)
+            {
+                anyCombatNearby = true;
+                break;
+            }
+        }
+
+        if (anyCombatNearby)
+        {
             uint32 const combatDelay = sWorld->getIntConfig(CONFIG_RESPAWN_COMBAT_CHECK_DELAY);
             _respawnQueue.insert({GameTime::GetGameTime().count() + combatDelay, SPAWN_TYPE_CREATURE, spawnId});
             return;

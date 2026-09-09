@@ -638,6 +638,7 @@ private:
     void _RemoveObjectFromUpdateList(WorldObject* obj);
 
     std::unordered_map<ObjectGuid::LowType /*dbGUID*/, time_t> _creatureRespawnTimes;
+    std::unordered_map<ObjectGuid::LowType /*dbGUID*/, time_t> _creatureDeathTimes;
     std::unordered_map<ObjectGuid::LowType /*dbGUID*/, time_t> _goRespawnTimes;
 
     // Time-ordered index for ProcessRespawns() — avoids O(n) full scan.
