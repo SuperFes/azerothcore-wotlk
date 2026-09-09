@@ -33,6 +33,8 @@ TEST(BotPersonalityTest, SameSeedIsDeterministic)
     EXPECT_FLOAT_EQ(a.dismountSlack, b.dismountSlack);
     EXPECT_FLOAT_EQ(a.socialScale, b.socialScale);
     EXPECT_EQ(a.slotBias, b.slotBias);
+    EXPECT_FLOAT_EQ(a.generosity, b.generosity);
+    EXPECT_EQ(a.ambition, b.ambition);
 }
 
 // PersonalityStrength = 0 is the documented escape hatch back to uniform bots, so it must be exact
@@ -46,6 +48,7 @@ TEST(BotPersonalityTest, ZeroStrengthIsExactlyNeutral)
         ASSERT_FLOAT_EQ(p.reactionScale, 1.0f) << "seed " << seed;
         ASSERT_FLOAT_EQ(p.dismountSlack, 1.0f) << "seed " << seed;
         ASSERT_FLOAT_EQ(p.socialScale, 1.0f) << "seed " << seed;
+        ASSERT_FLOAT_EQ(p.generosity, 1.0f) << "seed " << seed;
         ASSERT_FLOAT_EQ(p.personalSpaceX, 0.0f) << "seed " << seed;
         ASSERT_FLOAT_EQ(p.personalSpaceY, 0.0f) << "seed " << seed;
     }
@@ -63,6 +66,8 @@ TEST(BotPersonalityTest, TraitsStayInsideSampledBandsAtDefaultStrength)
         ASSERT_LE(p.dismountSlack, BotPersonality::DISMOUNT_BAND_HIGH) << "seed " << seed;
         ASSERT_GE(p.socialScale, BotPersonality::SOCIAL_BAND_LOW) << "seed " << seed;
         ASSERT_LE(p.socialScale, BotPersonality::SOCIAL_BAND_HIGH) << "seed " << seed;
+        ASSERT_GE(p.generosity, BotPersonality::GENEROSITY_BAND_LOW) << "seed " << seed;
+        ASSERT_LE(p.generosity, BotPersonality::GENEROSITY_BAND_HIGH) << "seed " << seed;
     }
 }
 
@@ -87,6 +92,8 @@ TEST(BotPersonalityTest, ExaggeratedStrengthStaysInsideHardBounds)
         ASSERT_LE(p.dismountSlack, BotPersonality::DISMOUNT_MAX) << "seed " << seed;
         ASSERT_GE(p.socialScale, BotPersonality::SOCIAL_MIN) << "seed " << seed;
         ASSERT_LE(p.socialScale, BotPersonality::SOCIAL_MAX) << "seed " << seed;
+        ASSERT_GE(p.generosity, BotPersonality::GENEROSITY_MIN) << "seed " << seed;
+        ASSERT_LE(p.generosity, BotPersonality::GENEROSITY_MAX) << "seed " << seed;
         ASSERT_LE(Magnitude(p), BotPersonality::SPACE_MAX + 1e-5f) << "seed " << seed;
     }
 }
@@ -169,6 +176,50 @@ TEST(BotPersonalityTest, JitterClampsOutOfRangeRolls)
 TEST(BotPersonalityTest, ZeroJitterLeavesTheTraitUntouched)
 {
     EXPECT_FLOAT_EQ(BotPersonality::ApplyJitter(1.37f, 0.0f, 0.9f), 1.37f);
+}
+
+// Ambition is what stops every bot behaving like a completionist. If the None share collapses the
+// trait stops being a trait, so the distribution itself is worth asserting rather than just bounds.
+TEST(BotPersonalityTest, NobodyHasAnAmbitionAtZeroStrength)
+{
+    for (uint32_t seed = 1; seed <= 5000u; ++seed)
+        ASSERT_EQ(BotPersonality::FromSeed(seed, 0.0f).ambition, BotAmbitionKind::None) << "seed " << seed;
+}
+
+TEST(BotPersonalityTest, AmbitionSplitMatchesTheConfiguredShares)
+{
+    constexpr uint32_t samples = 50000u;
+    uint32_t none = 0, item = 0, set = 0;
+
+    for (uint32_t seed = 1; seed <= samples; ++seed)
+    {
+        switch (BotPersonality::FromSeed(seed, 1.0f).ambition)
+        {
+            case BotAmbitionKind::None: ++none; break;
+            case BotAmbitionKind::Item: ++item; break;
+            case BotAmbitionKind::Set:  ++set;  break;
+        }
+    }
+
+    double const withAmbition = static_cast<double>(item + set) / samples;
+    EXPECT_NEAR(withAmbition, BotPersonality::AMBITION_SHARE, 0.02);
+
+    double const setShare = static_cast<double>(set) / (item + set);
+    EXPECT_NEAR(setShare, BotPersonality::AMBITION_SET_SHARE, 0.02);
+
+    // The point of the trait: plenty of bots want nothing in particular.
+    EXPECT_GT(none, samples / 5);
+}
+
+// Strength widens the other traits but must not hand everyone a goal.
+TEST(BotPersonalityTest, ExaggeratedStrengthDoesNotGiveEveryoneAnAmbition)
+{
+    uint32_t none = 0;
+    for (uint32_t seed = 1; seed <= 20000u; ++seed)
+        if (BotPersonality::FromSeed(seed, BotPersonality::STRENGTH_MAX).ambition == BotAmbitionKind::None)
+            ++none;
+
+    EXPECT_GT(none, 20000u / 5);
 }
 
 #endif  // MOD_PLAYERBOTS
