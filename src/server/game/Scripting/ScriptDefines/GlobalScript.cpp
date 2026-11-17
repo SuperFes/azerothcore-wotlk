@@ -74,6 +74,11 @@ void ScriptMgr::OnBeforeUpdateArenaPoints(ArenaTeam* at, std::map<ObjectGuid, ui
     CALL_ENABLED_HOOKS(GlobalScript, GLOBALHOOK_ON_BEFORE_UPDATE_ARENA_POINTS, script->OnBeforeUpdateArenaPoints(at, ap));
 }
 
+void ScriptMgr::OnArenaWeekReset()
+{
+    CALL_ENABLED_HOOKS(GlobalScript, GLOBALHOOK_ON_ARENA_WEEK_RESET, script->OnArenaWeekReset());
+}
+
 void ScriptMgr::OnAfterUpdateEncounterState(Map* map, EncounterCreditType type, uint32 creditEntry, Unit* source, Difficulty difficulty_fixed, DungeonEncounterList const* encounters, uint32 dungeonCompleted, bool updated)
 {
     CALL_ENABLED_HOOKS(GlobalScript, GLOBALHOOK_ON_AFTER_UPDATE_ENCOUNTER_STATE, script->OnAfterUpdateEncounterState(map, type, creditEntry, source, difficulty_fixed, encounters, dungeonCompleted, updated));
@@ -109,6 +114,11 @@ bool ScriptMgr::OnAllowedToLootContainerCheck(Player const* player, ObjectGuid s
     CALL_ENABLED_BOOLEAN_HOOKS(GlobalScript, GLOBALHOOK_ON_ALLOWED_TO_LOOT_CONTAINER_CHECK, script->OnAllowedToLootContainerCheck(player, source));
 }
 
+bool ScriptMgr::CanLootOtherFactionItem(Player const* player, ItemTemplate const* proto, ObjectGuid source)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(GlobalScript, GLOBALHOOK_CAN_LOOT_OTHER_FACTION_ITEM, script->CanLootOtherFactionItem(player, proto, source));
+}
+
 /**
  * @brief Called when an instance Id is deleted, usually because it expired or no players are bound to it anymore.
  *
@@ -142,6 +152,11 @@ void ScriptMgr::OnBeforeSetBossState(uint32 id, EncounterState newState, Encount
 void ScriptMgr::AfterInstanceGameObjectCreate(Map* instance, GameObject* go)
 {
     CALL_ENABLED_HOOKS(GlobalScript, GLOBALHOOK_AFTER_INSTANCE_GAME_OBJECT_CREATE, script->AfterInstanceGameObjectCreate(instance, go));
+}
+
+bool ScriptMgr::CanCreateLfgProposal(lfg::Lfg5Guids const& guids)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS(GlobalScript, GLOBALHOOK_CAN_CREATE_LFG_PROPOSAL, !script->CanCreateLfgProposal(guids));
 }
 
 GlobalScript::GlobalScript(char const* name, std::vector<uint16> enabledHooks)

@@ -359,6 +359,22 @@ class spell_pri_hymn_of_hope : public SpellScript
     }
 };
 
+static bool IsLightwellEntry(uint32 entry)
+{
+    switch (entry)
+    {
+        case PRIEST_LIGHTWELL_NPC_1:
+        case PRIEST_LIGHTWELL_NPC_2:
+        case PRIEST_LIGHTWELL_NPC_3:
+        case PRIEST_LIGHTWELL_NPC_4:
+        case PRIEST_LIGHTWELL_NPC_5:
+        case PRIEST_LIGHTWELL_NPC_6:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // 60123 - Lightwell
 class spell_pri_lightwell : public SpellScript
 {
@@ -389,7 +405,8 @@ class spell_pri_lightwell : public SpellScript
         // proc a spellcast
         if (Aura* chargesAura = caster->GetAura(SPELL_PRIEST_LIGHTWELL_CHARGES))
         {
-            caster->CastSpell(GetHitUnit(), lightwellRenew, caster->ToTempSummon()->GetSummonerGUID());
+            caster->CastSpell(GetHitUnit(), lightwellRenew, true, nullptr, nullptr,
+                caster->ToTempSummon()->GetSummonerGUID());
             if (chargesAura->ModCharges(-1))
                 caster->ToTempSummon()->UnSummon();
         }
@@ -439,16 +456,26 @@ class spell_pri_lightwell_renew : public AuraScript
 
     void HandleUpdateSpellclick(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
-        if (Unit* caster = GetCaster())
+        Player* player = GetTarget()->ToPlayer();
+        if (!player)
+            return;
+
+        Unit* caster = GetCaster();
+        if (!caster)
+            return;
+
+        // Spellclick gets hidden per player on the well's own NPC flags, so the wells are what
+        // need resending here, not the aura's caster (the priest).
+        for (Unit* controlled : caster->m_Controlled)
         {
-            if (Player* player = GetTarget()->ToPlayer())
-            {
-                UpdateData data;
-                WorldPacket packet;
-                caster->BuildValuesUpdateBlockForPlayer(&data, player);
-                data.BuildPacket(packet);
-                player->SendDirectMessage(&packet);
-            }
+            if (!IsLightwellEntry(controlled->GetEntry()))
+                continue;
+
+            UpdateData data;
+            WorldPacket packet;
+            controlled->BuildValuesUpdateBlockForPlayer(&data, player);
+            data.BuildPacket(packet);
+            player->SendDirectMessage(&packet);
         }
     }
 
@@ -971,13 +998,6 @@ class spell_pri_shadowfiend_death : public AuraScript
         return ValidateSpellInfo({ SPELL_PRIEST_GLYPH_OF_SHADOWFIEND_MANA });
     }
 
-    bool AfterCheckProc(ProcEventInfo& eventInfo, bool isTriggeredAtSpellProcEvent)
-    {
-        if (!isTriggeredAtSpellProcEvent)
-            return false;
-        return eventInfo.GetTypeMask() & PROC_FLAG_KILLED;
-    }
-
     void HandleProc(AuraEffect const* /*aurEff*/, ProcEventInfo& /*eventInfo*/)
     {
         PreventDefaultAction();
@@ -988,7 +1008,6 @@ class spell_pri_shadowfiend_death : public AuraScript
 
     void Register() override
     {
-        DoAfterCheckProc += AuraAfterCheckProcFn(spell_pri_shadowfiend_death::AfterCheckProc);
         OnEffectProc += AuraEffectProcFn(spell_pri_shadowfiend_death::HandleProc, EFFECT_0, SPELL_AURA_DUMMY);
     }
 };

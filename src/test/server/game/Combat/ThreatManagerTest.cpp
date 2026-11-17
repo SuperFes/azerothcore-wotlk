@@ -15,6 +15,7 @@
 
 #include "ThreatManager.h"
 #include "CombatManager.h"
+#include "CreatureAI.h"
 #include "DBCStores.h"
 #include "TestCreature.h"
 #include "TestMap.h"
@@ -137,6 +138,56 @@ TEST_F(ThreatManagerIntegrationTest, AddThreat_ImpliesCombat)
 
     EXPECT_TRUE(_creatureA->TestGetCombatMgr().HasCombat());
     EXPECT_TRUE(_creatureA->TestGetCombatMgr().IsInCombatWith(_creatureB));
+}
+
+// ============================================================================
+// CreatureAI::CalculateThreat hook
+// ============================================================================
+
+class ThreatRecordingAI : public CreatureAI
+{
+public:
+    explicit ThreatRecordingAI(Creature* creature) : CreatureAI(creature) { }
+
+    void UpdateAI(uint32 /*diff*/) override { }
+
+    void CalculateThreat(Unit* hatedUnit, float& threat, SpellInfo const* /*threatSpell*/) override
+    {
+        ++Calls;
+        LastUnit = hatedUnit;
+        LastThreat = threat;
+        threat *= Factor;
+    }
+
+    int Calls = 0;
+    Unit* LastUnit = nullptr;
+    float LastThreat = 0.0f;
+    float Factor = 1.0f;
+};
+
+TEST_F(ThreatManagerIntegrationTest, AddThreat_CallsOwnerCalculateThreat)
+{
+    ThreatRecordingAI* ai = new ThreatRecordingAI(_creatureA);
+    _creatureA->SetAI(ai);
+    _creatureA->IsAIEnabled = true;
+
+    _creatureA->TestGetThreatMgr().AddThreat(_creatureB, 100.0f);
+
+    EXPECT_EQ(ai->Calls, 1);
+    EXPECT_EQ(ai->LastUnit, _creatureB);
+    EXPECT_FLOAT_EQ(ai->LastThreat, 100.0f);
+}
+
+TEST_F(ThreatManagerIntegrationTest, AddThreat_CalculateThreatCanChangeAmount)
+{
+    ThreatRecordingAI* ai = new ThreatRecordingAI(_creatureA);
+    ai->Factor = 0.5f;
+    _creatureA->SetAI(ai);
+    _creatureA->IsAIEnabled = true;
+
+    _creatureA->TestGetThreatMgr().AddThreat(_creatureB, 100.0f);
+
+    EXPECT_FLOAT_EQ(_creatureA->TestGetThreatMgr().GetThreat(_creatureB), 50.0f);
 }
 
 // ============================================================================
@@ -1156,7 +1207,9 @@ TEST_F(ThreatManagerIntegrationTest,
     // Verify B's ref starts as ONLINE
     for (ThreatReference const* ref : _creatureA->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsOnline());
+        }
 
     // Make B immune to physical damage (A's melee school is SPELL_SCHOOL_MASK_NORMAL)
     // This triggers ShouldBeSuppressed via IsImmunedToDamage
@@ -1196,7 +1249,9 @@ TEST_F(ThreatManagerIntegrationTest,
     // Verify suppressed
     for (ThreatReference const* ref : _creatureA->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsSuppressed());
+        }
 
     // Remove immunity
     _creatureB->ApplySpellImmune(1, IMMUNITY_DAMAGE, SPELL_SCHOOL_MASK_NORMAL, false);
@@ -1205,7 +1260,9 @@ TEST_F(ThreatManagerIntegrationTest,
     _creatureB->TestGetThreatMgr().EvaluateSuppressed(false);
     for (ThreatReference const* ref : _creatureA->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsSuppressed()); // still suppressed
+        }
 
     // EvaluateSuppressed with canExpire=true SHOULD restore to online
     _creatureB->TestGetThreatMgr().EvaluateSuppressed(true);
@@ -1235,7 +1292,9 @@ TEST_F(ThreatManagerIntegrationTest,
     // Taunted victims should never be suppressed (ShouldBeSuppressed returns false)
     for (ThreatReference const* ref : _creatureA->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsOnline());
+        }
 
     // Cleanup
     _creatureA->TestGetThreatMgr().SetTauntStateForTesting(
@@ -1261,10 +1320,14 @@ TEST_F(ThreatManagerIntegrationTest,
     // Both refs should be suppressed
     for (ThreatReference const* ref : _creatureA->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsSuppressed());
+        }
     for (ThreatReference const* ref : creatureC->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsSuppressed());
+        }
 
     // Remove immunity and expire
     _creatureB->ApplySpellImmune(1, IMMUNITY_DAMAGE, SPELL_SCHOOL_MASK_NORMAL, false);
@@ -1273,10 +1336,14 @@ TEST_F(ThreatManagerIntegrationTest,
     // Both should be online again
     for (ThreatReference const* ref : _creatureA->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsOnline());
+        }
     for (ThreatReference const* ref : creatureC->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsOnline());
+        }
 
     creatureC->CleanupCombatState();
     delete creatureC;
@@ -2074,7 +2141,9 @@ TEST_F(ThreatManagerIntegrationTest,
     // Verify B is SUPPRESSED
     for (ThreatReference const* ref : _creatureA->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsSuppressed());
+        }
 
     // Remove immunity (but do NOT call EvaluateSuppressed)
     _creatureB->ApplySpellImmune(1, IMMUNITY_DAMAGE, SPELL_SCHOOL_MASK_NORMAL, false);
@@ -2112,7 +2181,9 @@ TEST_F(ThreatManagerIntegrationTest,
 
     for (ThreatReference const* ref : _creatureA->TestGetThreatMgr().GetUnsortedThreatList())
         if (ref->GetVictim() == _creatureB)
+        {
             EXPECT_TRUE(ref->IsSuppressed());
+        }
 
     // Threat should be unchanged (AddThreat skips non-online refs)
     EXPECT_FLOAT_EQ(

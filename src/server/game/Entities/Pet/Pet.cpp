@@ -505,10 +505,28 @@ void Pet::SavePetToDB(PetSaveMode mode)
     if (!GetOwnerGUID().IsPlayer())
         return;
 
-    // dont allow to save pet when it is loaded, possibly bugs action bar!, save only fully controlled creature
+    // save only fully controlled creature
     Player* owner = GetOwner()->ToPlayer();
-    if (!owner || m_loading || !GetEntry() || !isControlled())
+    if (!owner || !GetEntry() || !isControlled())
         return;
+
+    // Spells and auras are not loaded yet and saving them would wipe the stored ones,
+    // but the caller still updates the pet stable, so a slot change or deletion must reach the DB.
+    if (m_loading)
+    {
+        if (mode == PET_SAVE_AS_DELETED)
+            DeleteFromDB(m_charmInfo->GetPetNumber());
+        else if (mode > PET_SAVE_AS_CURRENT)
+        {
+            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHAR_PET_SLOT_BY_ID);
+            stmt->SetData(0, uint8(mode));
+            stmt->SetData(1, GetOwnerGUID().GetCounter());
+            stmt->SetData(2, m_charmInfo->GetPetNumber());
+            CharacterDatabase.Execute(stmt);
+        }
+
+        return;
+    }
 
     // not save pet as current if another pet temporary unsummoned
     if (mode == PET_SAVE_AS_CURRENT && owner->GetTemporaryUnsummonedPetNumber() &&
@@ -555,6 +573,16 @@ void Pet::SavePetToDB(PetSaveMode mode)
             stmt->SetData(0, ownerLowGUID);
             stmt->SetData(1, uint8(PET_SAVE_AS_CURRENT));
             stmt->SetData(2, uint8(PET_SAVE_LAST_STABLE_SLOT));
+            trans->Append(stmt);
+        }
+        // other pets keep their rows when unsummoned, so only move them out of the current slot
+        else if (mode == PET_SAVE_AS_CURRENT)
+        {
+            stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHAR_PET_SLOT_BY_SLOT_EXCLUDE_ID);
+            stmt->SetData(0, uint8(PET_SAVE_NOT_IN_SLOT));
+            stmt->SetData(1, ownerLowGUID);
+            stmt->SetData(2, uint8(PET_SAVE_AS_CURRENT));
+            stmt->SetData(3, m_charmInfo->GetPetNumber());
             trans->Append(stmt);
         }
 
@@ -715,128 +743,7 @@ void Pet::Update(uint32 diff)
                     }
                 }
 
-                if (m_tempspell)
-                {
-                    Unit* tempspellTarget = nullptr;
-                    if (!m_tempspellTarget.IsEmpty())
-                        tempspellTarget = ObjectAccessor::GetUnit(*this, m_tempspellTarget);
-
-                    Unit* tempoldTarget = nullptr;
-                    if (!m_tempoldTarget.IsEmpty())
-                        tempoldTarget = ObjectAccessor::GetUnit(*this, m_tempoldTarget);
-
-                    bool tempspellIsPositive = m_tempspellIsPositive;
-                    uint32 tempspell = m_tempspell;
-                    Unit* charmer = GetCharmerOrOwner();
-                    if (!charmer)
-                        return;
-
-                    if (!GetCharmInfo())
-                        return;
-
-                    if (tempspellTarget && tempspellTarget->IsAlive())
-                    {
-                        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(tempspell);
-                        if (!spellInfo)
-                            return;
-                        float max_range = GetSpellMaxRangeForTarget(tempspellTarget, spellInfo);
-                        if (spellInfo->RangeEntry->Flags == SPELL_RANGE_MELEE)
-                            max_range -= 2 * MIN_MELEE_REACH;
-
-                        if (IsWithinLOSInMap(tempspellTarget) && GetDistance(tempspellTarget) < max_range)
-                        {
-                            if (!GetCharmInfo()->GetGlobalCooldownMgr().HasGlobalCooldown(spellInfo) && !HasSpellCooldown(tempspell))
-                            {
-                                StopMoving();
-                                GetMotionMaster()->Clear(false);
-                                GetMotionMaster()->MoveIdle();
-
-                                GetCharmInfo()->SetIsAtStay(true);
-                                GetCharmInfo()->SetIsCommandFollow(false);
-                                GetCharmInfo()->SetIsFollowing(false);
-                                GetCharmInfo()->SetIsReturning(false);
-                                GetCharmInfo()->SaveStayPosition(true);
-
-                                AddSpellCooldown(tempspell, 0, spellInfo->IsCooldownStartedOnEvent() ? infinityCooldownDelay : 0);
-
-                                CastSpell(tempspellTarget, tempspell, false);
-                                m_tempspell = 0;
-                                m_tempspellTarget = ObjectGuid::Empty;
-
-                                if (tempspellIsPositive)
-                                {
-                                    if (tempoldTarget && tempoldTarget->IsAlive())
-                                    {
-                                        GetCharmInfo()->SetIsCommandAttack(true);
-                                        GetCharmInfo()->SetIsAtStay(false);
-                                        GetCharmInfo()->SetIsFollowing(false);
-                                        GetCharmInfo()->SetIsCommandFollow(false);
-                                        GetCharmInfo()->SetIsReturning(false);
-
-                                        if (ToCreature() && ToCreature()->IsAIEnabled)
-                                            ToCreature()->AI()->AttackStart(tempoldTarget);
-                                    }
-                                    else
-                                    {
-                                        if (IsAIEnabled)
-                                            AI()->PetStopAttack();
-                                        else
-                                        {
-                                            GetCharmInfo()->SetCommandState(COMMAND_FOLLOW);
-                                            GetCharmInfo()->SetIsCommandAttack(false);
-                                            GetCharmInfo()->SetIsAtStay(false);
-                                            GetCharmInfo()->SetIsReturning(true);
-                                            GetCharmInfo()->SetIsCommandFollow(true);
-                                            GetCharmInfo()->SetIsFollowing(false);
-                                            GetMotionMaster()->MoveFollow(charmer, PET_FOLLOW_DIST, GetFollowAngle());
-                                        }
-                                    }
-
-                                    m_tempoldTarget = ObjectGuid::Empty;
-                                    m_tempspellIsPositive = false;
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        m_tempspell = 0;
-                        m_tempspellTarget = ObjectGuid::Empty;
-                        m_tempoldTarget = ObjectGuid::Empty;
-                        m_tempspellIsPositive = false;
-
-                        Unit* victim = charmer->GetVictim();
-                        if (victim && victim->IsAlive())
-                        {
-                            StopMoving();
-                            GetMotionMaster()->Clear(false);
-                            GetMotionMaster()->MoveIdle();
-
-                            GetCharmInfo()->SetIsCommandAttack(true);
-                            GetCharmInfo()->SetIsAtStay(false);
-                            GetCharmInfo()->SetIsFollowing(false);
-                            GetCharmInfo()->SetIsCommandFollow(false);
-                            GetCharmInfo()->SetIsReturning(false);
-
-                            if (ToCreature() && ToCreature()->IsAIEnabled)
-                                ToCreature()->AI()->AttackStart(victim);
-                        }
-                        else
-                        {
-                            StopMoving();
-                            GetMotionMaster()->Clear(false);
-                            GetMotionMaster()->MoveIdle();
-
-                            GetCharmInfo()->SetCommandState(COMMAND_FOLLOW);
-                            GetCharmInfo()->SetIsCommandAttack(false);
-                            GetCharmInfo()->SetIsAtStay(false);
-                            GetCharmInfo()->SetIsReturning(true);
-                            GetCharmInfo()->SetIsCommandFollow(true);
-                            GetCharmInfo()->SetIsFollowing(false);
-                            GetMotionMaster()->MoveFollow(charmer, PET_FOLLOW_DIST, GetFollowAngle());
-                        }
-                    }
-                }
+                CastPendingSpell();
 
                 if (getPetType() == HUNTER_PET)
                 {
@@ -855,6 +762,150 @@ void Pet::Update(uint32 diff)
     }
 
     Creature::Update(diff);
+}
+
+void Pet::CastPendingSpell()
+{
+    if (!m_tempspell)
+        return;
+
+    Unit* tempSpellTarget = nullptr;
+    if (!m_tempspellTarget.IsEmpty())
+        tempSpellTarget = ObjectAccessor::GetUnit(*this, m_tempspellTarget);
+
+    Unit* tempOldTarget = nullptr;
+    if (!m_tempoldTarget.IsEmpty())
+        tempOldTarget = ObjectAccessor::GetUnit(*this, m_tempoldTarget);
+
+    bool tempSpellIsPositive = m_tempspellIsPositive;
+    uint32 tempSpell = m_tempspell;
+    Unit* charmer = GetCharmerOrOwner();
+    if (!charmer)
+        return;
+
+    CharmInfo* charmInfo = GetCharmInfo();
+    if (!charmInfo)
+        return;
+
+    if (!tempSpellTarget || !tempSpellTarget->IsAlive())
+    {
+        m_tempspell = 0;
+        m_tempspellTarget = ObjectGuid::Empty;
+        m_tempoldTarget = ObjectGuid::Empty;
+        m_tempspellIsPositive = false;
+
+        Unit* victim = charmer->GetVictim();
+
+        StopMoving();
+        GetMotionMaster()->Clear(false);
+        GetMotionMaster()->MoveIdle();
+
+        if (victim && victim->IsAlive())
+        {
+            charmInfo->SetIsCommandAttack(true);
+            charmInfo->SetIsAtStay(false);
+            charmInfo->SetIsFollowing(false);
+            charmInfo->SetIsCommandFollow(false);
+            charmInfo->SetIsReturning(false);
+
+            if (ToCreature() && ToCreature()->IsAIEnabled)
+                ToCreature()->AI()->AttackStart(victim);
+        }
+        else
+        {
+            charmInfo->SetCommandState(COMMAND_FOLLOW);
+            charmInfo->SetIsCommandAttack(false);
+            charmInfo->SetIsAtStay(false);
+            charmInfo->SetIsFollowing(false);
+            charmInfo->SetIsCommandFollow(true);
+            charmInfo->SetIsReturning(true);
+
+            GetMotionMaster()->MoveFollow(charmer, PET_FOLLOW_DIST, GetFollowAngle());
+        }
+
+        return;
+    }
+
+    SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(tempSpell);
+    if (!spellInfo)
+        return;
+
+    float maxRange = GetSpellMaxRangeForTarget(tempSpellTarget, spellInfo);
+    if (spellInfo->RangeEntry->Flags == SPELL_RANGE_MELEE)
+        maxRange -= 2 * MIN_MELEE_REACH;
+
+    if (!IsWithinLOSInMap(tempSpellTarget) || GetDistance(tempSpellTarget) >= maxRange)
+        return;
+
+    if (charmInfo->GetGlobalCooldownMgr().HasGlobalCooldown(spellInfo) || HasSpellCooldown(tempSpell))
+        return;
+
+    StopMoving();
+    GetMotionMaster()->Clear(false);
+    GetMotionMaster()->MoveIdle();
+
+    charmInfo->SetIsAtStay(true);
+    charmInfo->SetIsCommandFollow(false);
+    charmInfo->SetIsFollowing(false);
+    charmInfo->SetIsReturning(false);
+    charmInfo->SaveStayPosition(true);
+
+    AddSpellCooldown(tempSpell, 0, spellInfo->IsCooldownStartedOnEvent() ? infinityCooldownDelay : 0);
+
+    CastSpell(tempSpellTarget, tempSpell, false);
+    m_tempspell = 0;
+    m_tempspellTarget = ObjectGuid::Empty;
+
+    if (tempSpellIsPositive)
+    {
+        if (tempOldTarget && tempOldTarget->IsAlive())
+        {
+            charmInfo->SetIsCommandAttack(true);
+            charmInfo->SetIsAtStay(false);
+            charmInfo->SetIsFollowing(false);
+            charmInfo->SetIsCommandFollow(false);
+            charmInfo->SetIsReturning(false);
+
+            if (ToCreature() && ToCreature()->IsAIEnabled)
+                ToCreature()->AI()->AttackStart(tempOldTarget);
+        }
+        else
+        {
+            if (IsAIEnabled)
+            {
+                // Do not use PetStopAttack here: it interrupts the spell just started above.
+                AttackStop();
+                charmInfo->SetIsCommandAttack(false);
+                charmInfo->SetIsAtStay(false);
+                charmInfo->SetIsFollowing(false);
+                charmInfo->SetIsReturning(false);
+            }
+            else
+            {
+                charmInfo->SetCommandState(COMMAND_FOLLOW);
+                charmInfo->SetIsCommandAttack(false);
+                charmInfo->SetIsAtStay(false);
+                charmInfo->SetIsFollowing(false);
+                charmInfo->SetIsCommandFollow(true);
+                charmInfo->SetIsReturning(true);
+
+                GetMotionMaster()->MoveFollow(charmer, PET_FOLLOW_DIST, GetFollowAngle());
+            }
+        }
+
+        m_tempoldTarget = ObjectGuid::Empty;
+        m_tempspellIsPositive = false;
+    }
+    else if (HasReactState(REACT_PASSIVE) && charmInfo->HasCommandState(COMMAND_FOLLOW))
+    {
+        // Do not use PetStopAttack here: it interrupts the spell just started above.
+        // Once the cast finishes, PetAI will see no victim and resume following the owner.
+        AttackStop();
+        charmInfo->SetIsCommandAttack(false);
+        charmInfo->SetIsAtStay(false);
+        charmInfo->SetIsFollowing(false);
+        charmInfo->SetIsReturning(false);
+    }
 }
 
 void Pet::LoseHappiness()
@@ -2387,7 +2438,7 @@ void Pet::SynchronizeLevelWithOwner()
     }
 }
 
-void Pet::SetDisplayId(uint32 modelId, float displayScale /*= 1.f*/)
+void Pet::SetDisplayId(uint32 modelId, std::optional<float> displayScale /*= {}*/)
 {
     Guardian::SetDisplayId(modelId, displayScale);
 
@@ -2422,22 +2473,6 @@ void Pet::ClearCastWhenWillAvailable()
     m_tempspell = 0;
     m_tempspellTarget = ObjectGuid::Empty;
     m_tempoldTarget = ObjectGuid::Empty;
-}
-
-void Pet::RemoveSpellCooldown(uint32 spell_id, bool update /* = false */)
-{
-    m_CreatureSpellCooldowns.erase(spell_id);
-
-    if (update)
-    {
-        if (Player* playerOwner = GetCharmerOrOwnerPlayerOrPlayerItself())
-        {
-            WorldPacket data(SMSG_CLEAR_COOLDOWN, 4 + 8);
-            data << uint32(spell_id);
-            data << GetGUID();
-            playerOwner->SendDirectMessage(&data);
-        }
-    }
 }
 
 void Pet::FillPetInfo(PetStable::PetInfo* petInfo) const

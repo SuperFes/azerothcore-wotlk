@@ -1325,7 +1325,6 @@ public:
     InventoryResult CanUseItem(Item* pItem, bool not_loading = true) const;
     [[nodiscard]] bool HasItemTotemCategory(uint32 TotemCategory) const;
     bool IsTotemCategoryCompatiableWith(ItemTemplate const* pProto, uint32 requiredTotemCategoryId) const;
-    InventoryResult BotCanUseItem(ItemTemplate const* pItem) const;
     InventoryResult CanUseItem(ItemTemplate const* pItem) const;
     [[nodiscard]] InventoryResult CanUseAmmo(uint32 item) const;
     InventoryResult CanRollForItemInLFG(ItemTemplate const* item, WorldObject const* lootedObject) const;
@@ -1363,7 +1362,7 @@ public:
     void RemoveItem(uint8 bag, uint8 slot, bool update);
     void MoveItemFromInventory(uint8 bag, uint8 slot, bool update);
     // in trade, auction, guild bank, mail....
-    void MoveItemToInventory(ItemPosCountVec const& dest, Item* pItem, bool update, bool in_characterInventoryDB = false);
+    Item* MoveItemToInventory(ItemPosCountVec const& dest, Item* pItem, bool update, bool in_characterInventoryDB = false);
     // in trade, guild bank, mail....
     void RemoveItemDependentAurasAndCasts(Item* pItem);
     void DestroyItem(uint8 bag, uint8 slot, bool update);
@@ -1724,9 +1723,10 @@ public:
     void SendInitialSpells();
     void SendLearnPacket(uint32 spellId, bool learn);
     bool addSpell(uint32 spellId, uint8 addSpecMask, bool updateActive, bool temporary = false, bool learnFromSkill = false);
-    bool _addSpell(uint32 spellId, uint8 addSpecMask, bool temporary, bool learnFromSkill = false);
+    bool _addSpell(uint32 spellId, uint8 addSpecMask, bool temporary, bool learnFromSkill = false,
+        bool sendPacket = true);
     void learnSpell(uint32 spellId, bool temporary = false, bool learnFromSkill = false);
-    void removeSpell(uint32 spellId, uint8 removeSpecMask, bool onlyTemporary);
+    void removeSpell(uint32 spellId, uint8 removeSpecMask, bool onlyTemporary, bool sendPacket = true);
     void resetSpells();
     void LearnCustomSpells();
     void LearnDefaultSkills();
@@ -2093,13 +2093,10 @@ public:
     }
     bool IsMirrorTimerActive(MirrorTimerType type) { return m_MirrorTimer[type] == getMaxTimer(type); }
 
-    void SetMovement(PlayerMovementType pType);
-
     bool CanJoinConstantChannelInZone(ChatChannelsEntry const* channel, AreaTableEntry const* zone);
 
     void JoinedChannel(Channel* c);
     void LeftChannel(Channel* c);
-    bool IsInChannel(const Channel* c);
     void CleanupChannels();
     void ClearChannelWatch();
     void UpdateLFGChannel();
@@ -2684,8 +2681,6 @@ public:
 
     void SendSystemMessage(std::string_view msg, bool escapeCharacters = false);
 
-    void ResetSpeakTimers();
-
     std::string GetDebugInfo() const override;
 
     bool IsExpectingChangeTransport() const { return _expectingChangeTransport; }
@@ -2693,6 +2688,11 @@ public:
 
     uint32 GetPendingFlightChange() const { return _pendingFlightChangeCounter; }
     void SetPendingFlightChange(uint32 counter) { _pendingFlightChangeCounter = counter; }
+
+    [[nodiscard]] Optional<bool> GetPendingCanFlyResync() const { return _pendingCanFlyResync; }
+    void SetPendingCanFlyResync(bool enable) { _pendingCanFlyResync = enable; }
+    void ClearPendingCanFlyResync() { _pendingCanFlyResync.reset(); }
+    void ResyncCanFlyToClient();
 
     void SetMapChangeOrderCounter() { _mapChangeOrderCounter = GetSession()->GetOrderCounter(); }
     uint32 GetMapChangeOrderCounter() { return _mapChangeOrderCounter; }
@@ -2712,6 +2712,8 @@ public:
     bool CanRequestSpellCast(SpellInfo const* spellInfo);
 
 protected:
+    Unit* SelectCharmedAIGroupTarget(float distance) const;
+
     // Gamemaster whisper whitelist
     WhisperListContainer WhisperList;
 
@@ -3084,6 +3086,7 @@ private:
 
     bool _expectingChangeTransport;
     uint32 _pendingFlightChangeCounter;
+    Optional<bool> _pendingCanFlyResync = { };
     uint32 _mapChangeOrderCounter;
 };
 

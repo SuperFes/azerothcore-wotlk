@@ -275,7 +275,7 @@ pAuraEffectHandler AuraEffectHandler[TOTAL_AURAS] =
     &AuraEffect::HandleAuraModIncreaseFlightSpeed,                //210 SPELL_AURA_MOD_FLIGHT_SPEED_NOT_STACKING
     &AuraEffect::HandleAuraModIncreaseFlightSpeed,                //211 SPELL_AURA_MOD_FLIGHT_SPEED_NOT_STACK
     &AuraEffect::HandleAuraModRangedAttackPowerOfStatPercent,     //212 SPELL_AURA_MOD_RANGED_ATTACK_POWER_OF_STAT_PERCENT
-    &AuraEffect::HandleNoImmediateEffect,                         //213 SPELL_AURA_MOD_RAGE_FROM_DAMAGE_DEALT implemented in Player::RewardRage
+    &AuraEffect::HandleNoImmediateEffect,                         //213 SPELL_AURA_MOD_RAGE_FROM_DAMAGE_DEALT implemented in Unit::RewardRage
     &AuraEffect::HandleNULL,                                      //214 Tamed Pet Passive
     &AuraEffect::HandleArenaPreparation,                          //215 SPELL_AURA_ARENA_PREPARATION
     &AuraEffect::HandleModCastingSpeed,                           //216 SPELL_AURA_HASTE_SPELLS
@@ -1034,19 +1034,6 @@ void AuraEffect::UpdatePeriodic(Unit* caster)
                         case 59911: // Tenacity (vehicle)
                             GetBase()->RefreshDuration();
                             break;
-                        case 66823:
-                        case 67618:
-                        case 67619:
-                        case 67620: // Paralytic Toxin
-                            // Get 0 effect aura
-                            if (AuraEffect* slow = GetBase()->GetEffect(0))
-                            {
-                                int32 newAmount = slow->GetAmount() - 10;
-                                if (newAmount < -100)
-                                    newAmount = -100;
-                                slow->ChangeAmount(newAmount);
-                            }
-                            break;
                         case 66020:
                             // Get 0 effect aura
                             if (AuraEffect* slow = GetBase()->GetEffect(0))
@@ -1126,8 +1113,39 @@ void AuraEffect::SendTickImmune(Unit* target, Unit* caster) const
         caster->SendSpellDamageImmune(target, m_spellInfo->Id);
 }
 
+namespace
+{
+    class PreDeathAuraTickScope
+    {
+    public:
+        PreDeathAuraTickScope(Unit* caster, bool active) : _caster(active ? caster : nullptr),
+            _wasInTick(_caster && _caster->IsInPreDeathAuraTick())
+        {
+            if (_caster)
+                _caster->SetInPreDeathAuraTick(true);
+        }
+
+        ~PreDeathAuraTickScope()
+        {
+            if (_caster)
+                _caster->SetInPreDeathAuraTick(_wasInTick);
+        }
+
+        PreDeathAuraTickScope(PreDeathAuraTickScope const&) = delete;
+        PreDeathAuraTickScope& operator=(PreDeathAuraTickScope const&) = delete;
+
+    private:
+        Unit* const _caster;
+        bool const _wasInTick;
+    };
+}
+
 void AuraEffect::PeriodicTick(AuraApplication* aurApp, Unit* caster) const
 {
+    // the tick's damage and spells the caster casts from its procs and scripts skip combat,
+    // see Unit::DealDamage and Spell::prepare
+    PreDeathAuraTickScope preDeathTick(caster, GetBase()->HasCasterDiedSinceApply(caster));
+
     bool prevented = GetBase()->CallScriptEffectPeriodicHandlers(this, aurApp);
     if (prevented)
         return;
@@ -1231,6 +1249,11 @@ bool AuraEffect::CheckEffectProc(AuraApplication* aurApp, ProcEventInfo& eventIn
         case SPELL_AURA_MOD_CASTING_SPEED_NOT_STACK:
             // skip melee hits and instant cast spells
             if (!eventInfo.GetProcSpell() || !eventInfo.GetProcSpell()->GetCastTime())
+                return false;
+            break;
+        case SPELL_AURA_SPELL_MAGNET:
+            // Spell magnets do not consume charges for spells they cannot redirect.
+            if (!spellInfo || !spellInfo->CanBeRedirectedBySpellMagnet())
                 return false;
             break;
         case SPELL_AURA_MOD_POWER_COST_SCHOOL:
@@ -2270,14 +2293,17 @@ void AuraEffect::HandleAuraModShapeshift(AuraApplication const* aurApp, uint8 mo
     {
         SpellShapeshiftFormEntry const* shapeInfo = sSpellShapeshiftFormStore.LookupEntry(form);
         // Learn spells for shapeshift form - no need to send action bars or add spells to spellbook
+        // The client shows form spells from its own SpellShapeshiftForm.dbc, so no learned/removed spell packet
+        // (and no chat message) is sent
         for (uint8 i = 0; i < MAX_SHAPESHIFT_SPELLS; ++i)
         {
             if (!shapeInfo->stanceSpell[i])
                 continue;
             if (apply)
-                target->ToPlayer()->_addSpell(shapeInfo->stanceSpell[i], SPEC_MASK_ALL, true);
+                target->ToPlayer()->_addSpell(shapeInfo->stanceSpell[i], SPEC_MASK_ALL, true, false,
+                    /*sendPacket*/ false);
             else
-                target->ToPlayer()->removeSpell(shapeInfo->stanceSpell[i], SPEC_MASK_ALL, true);
+                target->ToPlayer()->removeSpell(shapeInfo->stanceSpell[i], SPEC_MASK_ALL, true, /*sendPacket*/ false);
         }
     }
 }
@@ -4218,7 +4244,8 @@ void AuraEffect::HandleAuraModStat(AuraApplication const* aurApp, uint8 mode, bo
         if (GetMiscValue() < 0 || GetMiscValue() == i)
         {
             if (spellGroupVal)
-                target->HandleStatFlatModifier(UnitMods(UNIT_MOD_STAT_START + i), TOTAL_VALUE, float(GetAmount()), !apply);
+                target->HandleStatFlatModifier(UnitMods(UNIT_MOD_STAT_START + i), TOTAL_VALUE,
+                    float(spellGroupVal), !apply);
 
             target->HandleStatFlatModifier(UnitMods(UNIT_MOD_STAT_START + i), TOTAL_VALUE, float(GetAmount()), apply);
             if (target->IsPlayer() || target->IsPet())
@@ -4464,14 +4491,19 @@ void AuraEffect::HandleAuraModIncreaseHealth(AuraApplication const* aurApp, uint
     if (apply)
     {
         target->HandleStatFlatModifier(UNIT_MOD_HEALTH, TOTAL_VALUE, float(GetAmount()), apply);
-        target->ModifyHealth(GetAmount());
+        // If target is dead, this could break the client's perception of their alive status
+        if (target->IsAlive())
+            target->ModifyHealth(GetAmount());
     }
     else
     {
-        if (int32(target->GetHealth()) > GetAmount())
-            target->ModifyHealth(-GetAmount());
-        else
-            target->SetHealth(1);
+        if (target->IsAlive())
+        {
+            if (int32(target->GetHealth()) > GetAmount())
+                target->ModifyHealth(-GetAmount());
+            else
+                target->SetHealth(1);
+        }
         target->HandleStatFlatModifier(UNIT_MOD_HEALTH, TOTAL_VALUE, float(GetAmount()), apply);
     }
 }
@@ -6030,20 +6062,18 @@ void AuraEffect::HandlePeriodicTriggerSpellAuraTick(Unit* target, Unit* caster) 
                             }
                             break;
                         // Restoration
+                        // The battleground buff casts it itself, so the player it lands on is the one healed.
                         case 24379:
                         case 23493:
                             {
-                                if (caster)
-                                {
-                                    int32 heal = caster->CountPctFromMaxHealth(10);
-                                    HealInfo healInfo(caster, target, heal, auraSpellInfo, auraSpellInfo->GetSchoolMask());
-                                    caster->HealBySpell(healInfo);
+                                int32 heal = target->CountPctFromMaxHealth(10);
+                                HealInfo healInfo(target, target, heal, auraSpellInfo, auraSpellInfo->GetSchoolMask());
+                                target->HealBySpell(healInfo);
 
-                                    if (int32 mana = caster->GetMaxPower(POWER_MANA))
-                                    {
-                                        mana /= 10;
-                                        caster->EnergizeBySpell(caster, 23493, mana, POWER_MANA);
-                                    }
+                                if (int32 mana = target->GetMaxPower(POWER_MANA))
+                                {
+                                    mana /= 10;
+                                    target->EnergizeBySpell(target, auraId, mana, POWER_MANA);
                                 }
                                 return;
                             }
@@ -6392,7 +6422,7 @@ void AuraEffect::HandlePeriodicDamageAurasTick(Unit* target, Unit* caster) const
     cleanDamage.mitigated_damage = std::max(0, mitigatedDamage);
 
     DamageInfo dmgInfo(caster, target, damage, GetSpellInfo(), GetSpellInfo()->GetSchoolMask(), DOT, cleanDamage.mitigated_damage);
-    Unit::CalcAbsorbResist(dmgInfo);
+    Unit::CalcAbsorbResist(dmgInfo, false, GetCasterLevel());
 
     uint32 absorb = dmgInfo.GetAbsorb();
     uint32 resist = dmgInfo.GetResist();
@@ -6485,7 +6515,7 @@ void AuraEffect::HandlePeriodicHealthLeechAuraTick(Unit* target, Unit* caster) c
     cleanDamage.mitigated_damage = std::max(0, cleanDamageAmount);
 
     DamageInfo dmgInfo(caster, target, damage, GetSpellInfo(), GetSpellInfo()->GetSchoolMask(), DOT, cleanDamage.mitigated_damage);
-    Unit::CalcAbsorbResist(dmgInfo);
+    Unit::CalcAbsorbResist(dmgInfo, false, GetCasterLevel());
 
     uint32 absorb = dmgInfo.GetAbsorb();
     uint32 resist = dmgInfo.GetResist();

@@ -256,6 +256,13 @@ struct boss_hodir : public BossAI
             SpawnHelpers();
     }
 
+    // CREATURE_FLAG_EXTRA_HARD_RESET despawns Hodir on evade, so a wiped attempt ends with him
+    // respawning: the point at which a Rare Cache shattered on that attempt comes back too.
+    void JustRespawned() override
+    {
+        instance->SetData(TYPE_HODIR_HM_RESET, 0);
+    }
+
     void JustEngagedWith(Unit*  /*who*/) override
     {
         me->CastSpell(me, SPELL_BITING_COLD_BOSS_AURA, true);
@@ -343,6 +350,7 @@ struct boss_hodir : public BossAI
                     instance->SetBossState(BOSS_HODIR, DONE);
                     me->CastSpell(me, 64899, true); // credit
                     instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_BITING_COLD_PLAYER_AURA);
+                    instance->DoRemoveAurasDueToSpellOnPlayers(SPELL_FLASH_FREEZE_CAST);
                 }
 
                 me->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE);
@@ -355,10 +363,10 @@ struct boss_hodir : public BossAI
 
                 events.Reset();
 
-                // Manually despawn helpers
-                summons.DespawnIf([this](ObjectGuid guid) -> bool
+                // Helpers stay for their outro; despawn everything else Hodir summoned.
+                summons.DespawnMatching([this](ObjectGuid guid)
                 {
-                    return std::ranges::none_of(Helpers, [guid](ObjectGuid Helper) { return guid == Helper; });
+                    return std::ranges::none_of(Helpers, [guid](ObjectGuid helper) { return guid == helper; });
                 });
 
                 // Start victory emote sequence on surviving helpers
@@ -385,12 +393,7 @@ struct boss_hodir : public BossAI
         if (!UpdateVictim())
         {
             if (me->IsInCombat())
-            {
-                Map::PlayerList const& pl = me->GetMap()->GetPlayers();
-                for (Map::PlayerList::const_iterator itr = pl.begin(); itr != pl.end(); ++itr)
-                    itr->GetSource()->CastSpell(itr->GetSource(), SPELL_FLASH_FREEZE_INSTAKILL, true);
                 EnterEvadeMode();
-            }
             return;
         }
 
@@ -523,9 +526,6 @@ struct boss_hodir : public BossAI
                 continue;
             }
 
-            // Stop combat behavior and start victory emote chain
-            helper->AI()->DoAction(ACTION_VICTORY_EMOTE);
-
             // Thaw if still frozen
             if (helper->HasAura(SPELL_FLASH_FREEZE_TRAPPED_NPC))
             {
@@ -533,6 +533,12 @@ struct boss_hodir : public BossAI
                 if (Creature* iceBlock = helper->FindNearestCreature(NPC_FLASH_FREEZE_NPC, 5.0f))
                     iceBlock->DespawnOrUnsummon();
             }
+
+            // Keep other NPCs from tagging the helper during the outro
+            helper->SetUnitFlag(UNIT_FLAG_IMMUNE_TO_NPC);
+
+            // Stop combat behavior and start victory emote chain
+            helper->AI()->DoAction(ACTION_VICTORY_EMOTE);
 
             // First cheer
             helper->HandleEmoteCommand(EMOTE_ONESHOT_CHEER_NO_SHEATHE);
@@ -1383,6 +1389,11 @@ class spell_hodir_flash_freeze_aura : public AuraScript
             if (!target || !caster || !caster->IsCreature())
                 return;
 
+            // A Flash Freeze landing after the kill would re-trap a helper and pull it out of its victory outro.
+            if (InstanceScript* instance = caster->GetInstanceScript())
+                if (instance->GetBossState(BOSS_HODIR) == DONE)
+                    return;
+
             if (Aura* aur = target->GetAura(target->IsPlayer() ? SPELL_FLASH_FREEZE_TRAPPED_PLAYER : SPELL_FLASH_FREEZE_TRAPPED_NPC))
             {
                 if (Unit* caster2 = aur->GetCaster())
@@ -1472,6 +1483,11 @@ class spell_hodir_toasty_fire_aura : public AuraScript
 {
     PrepareAuraScript(spell_hodir_toasty_fire_aura);
 
+    bool CheckProc(AuraEffect const* /*aurEff*/, ProcEventInfo& eventInfo)
+    {
+        return eventInfo.GetActor() != eventInfo.GetProcTarget();
+    }
+
     bool Validate(SpellInfo const* /*spellInfo*/) override
     {
         return ValidateSpellInfo({ SPELL_SINGED });
@@ -1496,6 +1512,7 @@ class spell_hodir_toasty_fire_aura : public AuraScript
 
     void Register() override
     {
+        DoCheckEffectProc += AuraCheckEffectProcFn(spell_hodir_toasty_fire_aura::CheckProc, EFFECT_1, SPELL_AURA_PROC_TRIGGER_SPELL);
         AfterEffectApply += AuraEffectApplyFn(spell_hodir_toasty_fire_aura::HandleAfterEffectApply, EFFECT_0, SPELL_AURA_MOD_STAT, AURA_EFFECT_HANDLE_SEND_FOR_CLIENT_MASK);
         OnEffectProc += AuraEffectProcFn(spell_hodir_toasty_fire_aura::HandleProc, EFFECT_1, SPELL_AURA_PROC_TRIGGER_SPELL);
     }

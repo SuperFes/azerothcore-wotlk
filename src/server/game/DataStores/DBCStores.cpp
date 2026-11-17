@@ -22,29 +22,20 @@
 #include "Errors.h"
 #include "LFGMgr.h"
 #include "Log.h"
-#include "RaceMgr.h"
 #include "SharedDefines.h"
 #include "SpellMgr.h"
 #include "TransportMgr.h"
 #include "World.h"
 #include <map>
 
-typedef std::map<uint16, uint32> AreaFlagByAreaID;
-typedef std::map<uint32, uint32> AreaFlagByMapID;
-
 typedef std::tuple<int16, int8, int32> WMOAreaTableKey;
 typedef std::map<WMOAreaTableKey, WMOAreaTableEntry const*> WMOAreaInfoByTripple;
-
-typedef std::multimap<uint32, CharSectionsEntry const*> CharSectionsMap;
 
 DBCStorage <AreaTableEntry> sAreaTableStore(AreaTableEntryfmt);
 DBCStorage <AreaGroupEntry> sAreaGroupStore(AreaGroupEntryfmt);
 DBCStorage <AreaPOIEntry> sAreaPOIStore(AreaPOIEntryfmt);
 
 static WMOAreaInfoByTripple sWMOAreaInfoByTripple;
-static AreaFlagByAreaID sAreaFlagByAreaID;
-// for instances without generated *.map files
-static AreaFlagByMapID  sAreaFlagByMapID;
 
 DBCStorage <AchievementEntry> sAchievementStore(Achievementfmt);
 DBCStorage <AchievementCategoryEntry> sAchievementCategoryStore(AchievementCategoryfmt);
@@ -57,7 +48,6 @@ DBCStorage <CharStartOutfitEntry> sCharStartOutfitStore(CharStartOutfitEntryfmt)
 std::map<uint32, CharStartOutfitEntry const*> sCharStartOutfitMap;
 
 DBCStorage <CharSectionsEntry> sCharSectionsStore(CharSectionsEntryfmt);
-CharSectionsMap sCharSectionMap;
 
 DBCStorage <CharTitlesEntry> sCharTitlesStore(CharTitlesEntryfmt);
 DBCStorage <ChatChannelsEntry> sChatChannelsStore(ChatChannelsEntryfmt);
@@ -224,7 +214,9 @@ static bool LoadDBC_assert_print(uint32 fsize, uint32 rsize, std::string const& 
 }
 
 template<class T>
-inline void LoadDBC(uint32& availableDbcLocales, StoreProblemList& errors, DBCStorage<T>& storage, std::string const& dbcPath, std::string const& filename, char const* dbTable = nullptr)
+inline void LoadDBC(uint32& availableDbcLocales, StoreProblemList& errors, DBCStorage<T>& storage,
+                    std::string const& dbcPath, std::string const& filename, char const* dbTable = nullptr,
+                    char const* dbFormat = nullptr)
 {
     // compatibility format and C++ structure sizes
     ASSERT(DBCFileLoader::GetFormatRecordSize(storage.GetFormat()) == sizeof(T) || LoadDBC_assert_print(DBCFileLoader::GetFormatRecordSize(storage.GetFormat()), sizeof(T), filename));
@@ -237,7 +229,7 @@ inline void LoadDBC(uint32& availableDbcLocales, StoreProblemList& errors, DBCSt
     {
         for (uint8 i = 0; i < TOTAL_LOCALES; ++i)
         {
-            if (!(availableDbcLocales & (1 << i)))
+            if (!(availableDbcLocales & (1 << i)) || !IsLocaleRegistered(LocaleConstant(i)))
                 continue;
 
             std::string localizedName(dbcPath);
@@ -251,7 +243,7 @@ inline void LoadDBC(uint32& availableDbcLocales, StoreProblemList& errors, DBCSt
     }
 
     if (dbTable)
-        storage.LoadFromDB(dbTable, storage.GetFormat());
+        storage.LoadFromDB(dbTable, dbFormat ? dbFormat : storage.GetFormat());
 
     if (storage.GetNumRows())
         existDBData = true;
@@ -282,6 +274,8 @@ void LoadDBCStores(std::string const& dataPath)
     uint32 availableDbcLocales = 0xFFFFFFFF;
 
 #define LOAD_DBC(store, file, dbtable) LoadDBC(availableDbcLocales, bad_dbc_files, store, dbcPath, file, dbtable)
+#define LOAD_GT_DBC(store, file, dbtable) \
+    LoadDBC(availableDbcLocales, bad_dbc_files, store, dbcPath, file, dbtable, GtDatabasefmt)
 
     LOAD_DBC(sAreaTableStore,                       "AreaTable.dbc",                        "areatable_dbc");
     LOAD_DBC(sAchievementStore,                     "Achievement.dbc",                      "achievement_dbc");
@@ -314,7 +308,7 @@ void LoadDBCStores(std::string const& dataPath)
     LOAD_DBC(sDurabilityQualityStore,               "DurabilityQuality.dbc",                "durabilityquality_dbc");
     LOAD_DBC(sEmotesStore,                          "Emotes.dbc",                           "emotes_dbc");
     LOAD_DBC(sEmotesTextStore,                      "EmotesText.dbc",                       "emotestext_dbc");
-    LOAD_DBC(sEmotesTextSoundStore,                 "EmotesTextSound.dbc",                  "emotetextsound_dbc");
+    LOAD_DBC(sEmotesTextSoundStore,                 "EmotesTextSound.dbc",                  "emotestextsound_dbc");
     LOAD_DBC(sFactionStore,                         "Faction.dbc",                          "faction_dbc");
     LOAD_DBC(sFactionTemplateStore,                 "FactionTemplate.dbc",                  "factiontemplate_dbc");
     LOAD_DBC(sGameObjectArtKitStore,                "GameObjectArtKit.dbc",                 "gameobjectartkit_dbc");
@@ -322,18 +316,18 @@ void LoadDBCStores(std::string const& dataPath)
     LOAD_DBC(sGemPropertiesStore,                   "GemProperties.dbc",                    "gemproperties_dbc");
     LOAD_DBC(sGlyphPropertiesStore,                 "GlyphProperties.dbc",                  "glyphproperties_dbc");
     LOAD_DBC(sGlyphSlotStore,                       "GlyphSlot.dbc",                        "glyphslot_dbc");
-    LOAD_DBC(sGtBarberShopCostBaseStore,            "gtBarberShopCostBase.dbc",             "gtbarbershopcostbase_dbc");
-    LOAD_DBC(sGtCombatRatingsStore,                 "gtCombatRatings.dbc",                  "gtcombatratings_dbc");
-    LOAD_DBC(sGtChanceToMeleeCritBaseStore,         "gtChanceToMeleeCritBase.dbc",          "gtchancetomeleecritbase_dbc");
-    LOAD_DBC(sGtChanceToMeleeCritStore,             "gtChanceToMeleeCrit.dbc",              "gtchancetomeleecrit_dbc");
-    LOAD_DBC(sGtChanceToSpellCritBaseStore,         "gtChanceToSpellCritBase.dbc",          "gtchancetospellcritbase_dbc");
-    LOAD_DBC(sGtChanceToSpellCritStore,             "gtChanceToSpellCrit.dbc",              "gtchancetospellcrit_dbc");
-    LOAD_DBC(sGtNPCManaCostScalerStore,             "gtNPCManaCostScaler.dbc",              "gtnpcmanacostscaler_dbc");
+    LOAD_GT_DBC(sGtBarberShopCostBaseStore,         "gtBarberShopCostBase.dbc",             "gtbarbershopcostbase_dbc");
+    LOAD_GT_DBC(sGtCombatRatingsStore,              "gtCombatRatings.dbc",                  "gtcombatratings_dbc");
+    LOAD_GT_DBC(sGtChanceToMeleeCritBaseStore,      "gtChanceToMeleeCritBase.dbc",          "gtchancetomeleecritbase_dbc");
+    LOAD_GT_DBC(sGtChanceToMeleeCritStore,          "gtChanceToMeleeCrit.dbc",              "gtchancetomeleecrit_dbc");
+    LOAD_GT_DBC(sGtChanceToSpellCritBaseStore,      "gtChanceToSpellCritBase.dbc",          "gtchancetospellcritbase_dbc");
+    LOAD_GT_DBC(sGtChanceToSpellCritStore,          "gtChanceToSpellCrit.dbc",              "gtchancetospellcrit_dbc");
+    LOAD_GT_DBC(sGtNPCManaCostScalerStore,          "gtNPCManaCostScaler.dbc",              "gtnpcmanacostscaler_dbc");
     LOAD_DBC(sGtOCTClassCombatRatingScalarStore,    "gtOCTClassCombatRatingScalar.dbc",     "gtoctclasscombatratingscalar_dbc");
-    LOAD_DBC(sGtOCTRegenHPStore,                    "gtOCTRegenHP.dbc",                     "gtoctregenhp_dbc");
+    LOAD_GT_DBC(sGtOCTRegenHPStore,                 "gtOCTRegenHP.dbc",                     "gtoctregenhp_dbc");
     //LOAD_DBC(sGtOCTRegenMPStore,                  "gtOCTRegenMP.dbc",                     "gtoctregenmp_dbc");       -- not used currently
-    LOAD_DBC(sGtRegenHPPerSptStore,                 "gtRegenHPPerSpt.dbc",                  "gtregenhpperspt_dbc");
-    LOAD_DBC(sGtRegenMPPerSptStore,                 "gtRegenMPPerSpt.dbc",                  "gtregenmpperspt_dbc");
+    LOAD_GT_DBC(sGtRegenHPPerSptStore,              "gtRegenHPPerSpt.dbc",                  "gtregenhpperspt_dbc");
+    LOAD_GT_DBC(sGtRegenMPPerSptStore,              "gtRegenMPPerSpt.dbc",                  "gtregenmpperspt_dbc");
     LOAD_DBC(sHolidaysStore,                        "Holidays.dbc",                         "holidays_dbc");
     LOAD_DBC(sItemStore,                            "Item.dbc",                             "item_dbc");
     LOAD_DBC(sItemBagFamilyStore,                   "ItemBagFamily.dbc",                    "itembagfamily_dbc");
@@ -399,26 +393,10 @@ void LoadDBCStores(std::string const& dataPath)
     LOAD_DBC(sWorldMapOverlayStore,                 "WorldMapOverlay.dbc",                  "worldmapoverlay_dbc");
 
 #undef LOAD_DBC
-
-    for (uint32 i = 0; i < sAreaTableStore.GetNumRows(); ++i)    // areaflag numbered from 0
-    {
-        if (AreaTableEntry const* area = sAreaTableStore.LookupEntry(i))
-        {
-            // fill AreaId->DBC records
-            sAreaFlagByAreaID.insert(AreaFlagByAreaID::value_type(uint16(area->ID), area->exploreFlag));
-
-            // fill MapId->DBC records ( skip sub zones and continents )
-            if (area->zone == 0 && area->mapid != 0 && area->mapid != 1 && area->mapid != 530)
-                sAreaFlagByMapID.insert(AreaFlagByMapID::value_type(area->mapid, area->exploreFlag));
-        }
-    }
+#undef LOAD_GT_DBC
 
     for (CharStartOutfitEntry const* outfit : sCharStartOutfitStore)
         sCharStartOutfitMap[outfit->Race | (outfit->Class << 8) | (outfit->Gender << 16)] = outfit;
-
-    for (CharSectionsEntry const* charSection : sCharSectionsStore)
-        if (charSection->Race && ((1 << (charSection->Race - 1)) & sRaceMgr->GetPlayableRaceMask()) != 0) //ignore Nonplayable races
-            sCharSectionMap.insert({ charSection->GenType | (charSection->Gender << 8) | (charSection->Race << 16), charSection });
 
     for (FactionEntry const* faction : sFactionStore)
     {
@@ -442,7 +420,10 @@ void LoadDBCStores(std::string const& dataPath)
     }
 
     for (EmotesTextSoundEntry const* emoteTextSound : sEmotesTextSoundStore)
-        sEmotesTextSoundMap[EmotesTextSoundKey(emoteTextSound->EmotesTextId, emoteTextSound->RaceId, emoteTextSound->SexId)] = emoteTextSound;
+    {
+        EmotesTextSoundKey key(emoteTextSound->EmotesTextId, emoteTextSound->RaceId, emoteTextSound->SexId);
+        sEmotesTextSoundMap[key] = emoteTextSound;
+    }
 
     // fill data
     for (MapDifficultyEntry const* entry : sMapDifficultyStore)
@@ -884,18 +865,6 @@ CharStartOutfitEntry const* GetCharStartOutfitEntry(uint8 race, uint8 class_, ui
     return itr->second;
 }
 
-CharSectionsEntry const* GetCharSectionEntry(uint8 race, CharSectionType genType, uint8 gender, uint8 type, uint8 color)
-{
-    std::pair<CharSectionsMap::const_iterator, CharSectionsMap::const_iterator> eqr = sCharSectionMap.equal_range(uint32(genType) | uint32(gender << 8) | uint32(race << 16));
-    for (CharSectionsMap::const_iterator itr = eqr.first; itr != eqr.second; ++itr)
-    {
-        if (itr->second->Type == type && itr->second->Color == color)
-            return itr->second;
-    }
-
-    return nullptr;
-}
-
 /// Returns LFGDungeonEntry for a specific map and difficulty. Will return first found entry if multiple dungeons use the same map (such as Scarlet Monastery)
 LFGDungeonEntry const* GetLFGDungeon(uint32 mapId, Difficulty difficulty)
 {
@@ -976,41 +945,4 @@ std::vector<SkillLineAbilityEntry const*> const& GetSkillLineAbilitiesBySkillLin
         return emptyVector;
     }
     return it->second;
-}
-
-uint32 GetAreaFlagByMapId(uint32 mapid)
-{
-    AreaFlagByMapID::iterator i = sAreaFlagByMapID.find(mapid);
-    if (i == sAreaFlagByMapID.end())
-        return 0;
-    return i->second;
-}
-
-int32 GetAreaFlagByAreaID(uint32 area_id)
-{
-    AreaFlagByAreaID::iterator i = sAreaFlagByAreaID.find(area_id);
-    if (i == sAreaFlagByAreaID.end())
-        return -1;
-
-    return i->second;
-}
-
-AreaTableEntry const* GetAreaEntryByAreaID(uint32 area_id)
-{
-    int32 areaflag = GetAreaFlagByAreaID(area_id);
-    if (areaflag < 0)
-        return nullptr;
-
-    return sAreaTableStore.LookupEntry(areaflag);
-}
-
-AreaTableEntry const* GetAreaEntryByAreaFlagAndMap(uint32 area_flag, uint32 map_id)
-{
-    if (area_flag)
-        return sAreaTableStore.LookupEntry(area_flag);
-
-    if (MapEntry const* mapEntry = sMapStore.LookupEntry(map_id))
-        return GetAreaEntryByAreaID(mapEntry->linked_zone);
-
-    return nullptr;
 }

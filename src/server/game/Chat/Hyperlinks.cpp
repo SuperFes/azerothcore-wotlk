@@ -27,7 +27,19 @@
 
 using namespace Acore::Hyperlinks;
 
-inline uint8 toHex(char c) { return (c >= '0' && c <= '9') ? c - '0' + 0x10 : (c >= 'a' && c <= 'f') ? c - 'a' + 0x1a : 0x00; }
+inline uint8 toHex(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0' + 0x10;
+
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 0x1a;
+
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 0x1a;
+
+    return 0x00;
+}
 
 // Validates a single hyperlink
 HyperlinkInfo Acore::Hyperlinks::ParseSingleHyperlink(std::string_view str)
@@ -157,13 +169,20 @@ struct LinkValidator<LinkTags::item>
 
             if (randomSuffixes)
             {
-                std::string_view randomSuffix((*randomSuffixes)[i]);
-                if ((!randomSuffix.empty()) &&
-                  (text.length() == (name.length() + 1 + randomSuffix.length())) &&
-                  (text.substr(0, name.length()) == name) &&
-                  (text[name.length()] == ' ') &&
-                  (text.substr(name.length() + 1) == randomSuffix))
-                    return true;
+                // A locale registered by a module may have no DBC strings, the client appends the suffix of its own
+                // DBC locale to the translated name
+                uint8 first = (i <= LOCALE_ruRU) ? i : 0;
+                uint8 last = (i <= LOCALE_ruRU) ? i : TOTAL_LOCALES - 1;
+                for (uint8 dbcLocale = first; dbcLocale <= last; ++dbcLocale)
+                {
+                    std::string_view randomSuffix((*randomSuffixes)[dbcLocale]);
+                    if ((!randomSuffix.empty()) &&
+                      (text.length() == (name.length() + 1 + randomSuffix.length())) &&
+                      (text.substr(0, name.length()) == name) &&
+                      (text[name.length()] == ' ') &&
+                      (text.substr(name.length() + 1) == randomSuffix))
+                        return true;
+                }
             }
             else if (text == name)
                 return true;
@@ -323,6 +342,20 @@ struct LinkValidator<LinkTags::trade>
     }
 };
 
+template <>
+struct LinkValidator<LinkTags::found>
+{
+    static bool IsTextValid(FoundLinkData const&, std::string_view text)
+    {
+        return !text.empty();
+    }
+
+    static bool IsColorValid(FoundLinkData const&, HyperlinkColor c)
+    {
+        return c == CHAT_LINK_COLOR_ACHIEVEMENT; // 0xffffff00 - yellow
+    }
+};
+
 template <typename TAG>
 static bool ValidateAs(HyperlinkInfo const& info)
 {
@@ -356,6 +389,7 @@ static bool ValidateLinkInfo(HyperlinkInfo const& info)
     TryValidateAs(creature);
     TryValidateAs(creature_entry);
     TryValidateAs(enchant);
+    TryValidateAs(found);
     TryValidateAs(gameevent);
     TryValidateAs(gameobject);
     TryValidateAs(gameobject_entry);

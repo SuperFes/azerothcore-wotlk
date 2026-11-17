@@ -27,7 +27,7 @@
 
 enum UlduarBossIds
 {
-    // Boss IDs used by SetBossNumber/SetBossState (0-indexed)
+    // Boss IDs used by SetBossNumber/SetBossState, matching DungeonEncounter.dbc encounter indexes
     BOSS_LEVIATHAN                          = 0,
     BOSS_IGNIS                              = 1,
     BOSS_RAZORSCALE                         = 2,
@@ -35,10 +35,10 @@ enum UlduarBossIds
     BOSS_ASSEMBLY                           = 4,
     BOSS_KOLOGARN                           = 5,
     BOSS_AURIAYA                            = 6,
-    BOSS_FREYA                              = 7,
-    BOSS_HODIR                              = 8,
-    BOSS_MIMIRON                            = 9,
-    BOSS_THORIM                             = 10,
+    BOSS_HODIR                              = 7,
+    BOSS_THORIM                             = 8,
+    BOSS_FREYA                              = 9,
+    BOSS_MIMIRON                            = 10,
     BOSS_VEZAX                              = 11,
     BOSS_YOGGSARON                          = 12,
     BOSS_ALGALON                            = 13,
@@ -51,6 +51,7 @@ enum UlduarData
     TYPE_WATCHERS                           = 14,
     TYPE_HODIR_HM_FAIL                      = 15,
     TYPE_WINTER_CACHE                       = 16,
+    TYPE_HODIR_HM_RESET                     = 17,
 
     // Assembly of Iron
     DATA_STEELBREAKER                       = 20,
@@ -110,7 +111,6 @@ enum UlduarData
     DATA_UNIVERSE_GLOBE                     = 608,
     DATA_ALGALON_TRAPDOOR                   = 609,
     DATA_BRANN_BRONZEBEARD_ALG              = 610,
-    DATA_RESUMMON_ALGALON                   = 611,
 
     // Achievements
     DATA_DWARFAGEDDON                       = 700,
@@ -276,6 +276,7 @@ enum UlduarGameObjects
     GO_LEVIATHAN_DOORS                      = 194630,
     GO_LIGHTNING_WALL1                      = 194905,
     GO_LIGHTNING_WALL2                      = 194416,
+    GO_ULDUAR_PROTECTIVE_BUBBLE             = 194484,
     GO_MIMIRONS_TARGETTING_CRYSTAL          = 194705,
     GO_FREYAS_TARGETTING_CRYSTAL            = 194704,
     GO_HODIRS_TARGETTING_CRYSTAL            = 194707,
@@ -352,11 +353,14 @@ enum UlduarPersistentData
 {
     PERSISTENT_DATA_WATCHERS_MASK           = 0,
     PERSISTENT_DATA_CONSPEEDATORY,
-    PERSISTENT_DATA_UNBROKEN,
+    PERSISTENT_DATA_UNBROKEN_FAIL,
     PERSISTENT_DATA_ALGALON_TIMER,
     PERSISTENT_DATA_C_OF_ULDUAR_MASK,
     PERSISTENT_DATA_MAGE_BARRIER,
     PERSISTENT_DATA_ALGALON_FIRST_PULL,
+    // Set when Brann's action list unlocks the salvaged vehicles, they stay boardable for the rest of the lockout
+    PERSISTENT_DATA_LEVIATHAN_VEHICLES_USABLE,
+    PERSISTENT_DATA_ALGALON_DEADLINE,
     MAX_PERSISTENT_DATA
 };
 
@@ -418,6 +422,7 @@ enum UlduarMisc
     TIMER_ALGALON_DEFEATED                  = 300,
     TIMER_ALGALON_TO_SUMMON                 = 200,
     TIMER_ALGALON_SUMMONED                  = 100,
+    TIMER_ALGALON_MINUTES                   = 60,
 
     // Algalon the Observer, Freya, Hodir, Mimiron, Thorim, Gossip Keepers
     SPELL_TELEPORT                          = 62940,

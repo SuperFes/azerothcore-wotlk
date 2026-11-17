@@ -315,7 +315,14 @@ Aura* Aura::Create(SpellInfo const* spellproto, uint8 effMask, WorldObject* owne
     // try to get caster of aura
     if (casterGUID)
     {
-        if (owner->GetGUID() == casterGUID)
+        // world gameobjects can't own auras and they send empty casterguid
+        // checked on sniffs with spell 22247
+        if (casterGUID.IsGameObject())
+        {
+            caster = nullptr;
+            casterGUID.Clear();
+        }
+        else if (owner->GetGUID() == casterGUID)
             caster = owner->ToUnit();
         else
             caster = ObjectAccessor::GetUnit(*owner, casterGUID);
@@ -351,9 +358,9 @@ Aura* Aura::Create(SpellInfo const* spellproto, uint8 effMask, WorldObject* owne
 }
 
 Aura::Aura(SpellInfo const* spellproto, WorldObject* owner, Unit* caster, Item* castItem, ObjectGuid casterGUID, ObjectGuid itemGUID /*= ObjectGuid::Empty*/) :
-    m_spellInfo(spellproto), m_casterGuid(casterGUID ? casterGUID : caster->GetGUID()),
+    m_spellInfo(spellproto), m_casterGuid(casterGUID ? casterGUID : (caster ? caster->GetGUID() : ObjectGuid::Empty)),
     m_castItemGuid(itemGUID ? itemGUID : castItem ? castItem->GetGUID() : ObjectGuid::Empty), m_castItemEntry(castItem ? castItem->GetEntry() : 0), m_applyTime(GameTime::GetGameTime().count()),
-    m_owner(owner), m_timeCla(0), m_updateTargetMapInterval(0),
+    m_refreshTime(GameTime::GetGameTimeMS()), m_owner(owner), m_timeCla(0), m_updateTargetMapInterval(0),
     m_casterLevel(caster ? caster->GetLevel() : m_spellInfo->SpellLevel), m_procCharges(0), m_stackAmount(1),
     m_isRemoved(false), m_isSingleTarget(false), m_isUsingCharges(false), m_triggeredByAuraSpellInfo(nullptr)
 {
@@ -422,6 +429,12 @@ Unit* Aura::GetCaster() const
     return ObjectAccessor::GetUnit(*GetOwner(), GetCasterGUID());
 }
 
+bool Aura::HasCasterDiedSinceApply(Unit const* caster) const
+{
+    // auras on the caster itself that survive its death are passives or death persistent, never left behind
+    return caster && caster != GetOwner() && caster->GetLastDeathTime() >= m_refreshTime;
+}
+
 AuraObjectType Aura::GetType() const
 {
     if (!m_owner)
@@ -488,7 +501,10 @@ void Aura::_UnapplyForTarget(Unit* target, Unit* caster, AuraApplication* auraAp
         }
         else
         {
-            caster->ToCreature()->AddSpellCooldown(m_spellInfo->Id, 0, 0);
+            Creature* creatureCaster = caster->ToCreature();
+            // Drop the infinite cooldown set on apply, a longer running cooldown would otherwise be kept
+            creatureCaster->RemoveSpellCooldown(m_spellInfo->Id, false);
+            creatureCaster->AddSpellCooldown(m_spellInfo->Id, 0, 0);
 
             if (Unit* owner = caster->GetCharmerOrOwner())
             {
@@ -529,6 +545,52 @@ void Aura::_Remove(AuraRemoveMode removeMode)
     }
 }
 
+// paladin auras of the same spell may coexist on a target (one per caster) so Aura Mastery works
+// per-caster, but only the strongest one keeps its effects. Ties favor the target's own self-cast
+// aura, then the lower caster guid, to keep the outcome deterministic across update cycles.
+static bool IsPaladinAuraDominant(Aura const* aura, Aura const* other, Unit const* target)
+{
+    auto primaryAmount = [](Aura const* a) -> int32
+    {
+        for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
+            if (AuraEffect* eff = a->GetEffect(i))
+                return eff->GetAmount();
+        return 0;
+    };
+
+    int32 auraAmount = std::abs(primaryAmount(aura));
+    int32 otherAmount = std::abs(primaryAmount(other));
+    if (auraAmount != otherAmount)
+        return auraAmount > otherAmount;
+
+    bool auraSelf = aura->GetCasterGUID() == target->GetGUID();
+    bool otherSelf = other->GetCasterGUID() == target->GetGUID();
+    if (auraSelf != otherSelf)
+        return auraSelf;
+
+    return aura->GetCasterGUID() < other->GetCasterGUID();
+}
+
+// strongest paladin aura application of the same rank chain on the target, cast by someone other
+// than `casterGUID`
+static AuraApplication* GetDominantOtherSameSpellApp(Unit* target, uint32 spellId, ObjectGuid casterGUID)
+{
+    AuraApplication* best = nullptr;
+    for (uint32 rankSpell = sSpellMgr->GetFirstSpellInChain(spellId); rankSpell; rankSpell = sSpellMgr->GetNextSpellInChain(rankSpell))
+    {
+        Unit::AuraApplicationMapBoundsNonConst bounds = target->GetAppliedAuras().equal_range(rankSpell);
+        for (Unit::AuraApplicationMap::iterator it = bounds.first; it != bounds.second; ++it)
+        {
+            AuraApplication* app = it->second;
+            if (app->GetBase()->GetCasterGUID() == casterGUID)
+                continue;
+            if (!best || IsPaladinAuraDominant(app->GetBase(), best->GetBase(), target))
+                best = app;
+        }
+    }
+    return best;
+}
+
 void Aura::UpdateTargetMap(Unit* caster, bool apply)
 {
     if (IsRemoved())
@@ -561,9 +623,28 @@ void Aura::UpdateTargetMap(Unit* caster, bool apply)
                         existing->second &= ~(1 << effIndex);
                 }
 
+            // paladin auras of the same spell coexist per caster, but only the strongest one keeps
+            // its effects on the target. If a stronger duplicate from another paladin is present,
+            // strip this aura's effects and keep the application effect-free (Aura Mastery needs it
+            // applied) without removing it, which would otherwise churn every update cycle.
+            bool keepEffectless = false;
+            if (m_spellInfo->GetSpellSpecific() == SPELL_SPECIFIC_AURA)
+            {
+                if (AuraApplication* otherApp = GetDominantOtherSameSpellApp(existing->first, GetId(), GetCasterGUID()))
+                {
+                    if (!IsPaladinAuraDominant(this, otherApp->GetBase(), existing->first))
+                    {
+                        for (uint8 effIndex = 0; effIndex < MAX_SPELL_EFFECTS; ++effIndex)
+                            if (appIter->second->HasEffect(effIndex))
+                                appIter->second->_HandleEffect(effIndex, false);
+                        keepEffectless = true;
+                    }
+                }
+            }
+
             // needs readding - remove now, will be applied in next update cycle
             // (dbcs do not have auras which apply on same type of targets but have different radius, so this is not really needed)
-            if (appIter->second->GetEffectMask() != existing->second || !CanBeAppliedOn(existing->first))
+            if ((appIter->second->GetEffectMask() != existing->second && !keepEffectless) || !CanBeAppliedOn(existing->first))
                 targetsToRemove.push_back(appIter->second->GetTarget());
             // nothing todo - aura already applied
             // remove from auras to register list
@@ -653,7 +734,30 @@ void Aura::UpdateTargetMap(Unit* caster, bool apply)
                                itr->first->GetName(), itr->first->IsInWorld() ? itr->first->GetMap()->GetId() : uint32(-1));
                 ABORT();
             }
-            itr->first->_CreateAuraApplication(this, itr->second);
+
+            // paladin auras of the same spell coexist per caster, but only the strongest one keeps
+            // its effects on the target; weaker duplicates are applied without effects so each
+            // paladin's Aura Mastery can still detect their own aura on the target.
+            uint8 effMask = itr->second;
+            if (m_spellInfo->GetSpellSpecific() == SPELL_SPECIFIC_AURA)
+            {
+                if (AuraApplication* otherApp = GetDominantOtherSameSpellApp(itr->first, GetId(), GetCasterGUID()))
+                {
+                    if (IsPaladinAuraDominant(this, otherApp->GetBase(), itr->first))
+                    {
+                        // this aura is stronger - strip the other aura's effects on this target
+                        for (uint8 effIndex = 0; effIndex < MAX_SPELL_EFFECTS; ++effIndex)
+                            if (otherApp->HasEffect(effIndex))
+                                otherApp->_HandleEffect(effIndex, false);
+                    }
+                    else
+                    {
+                        effMask = 0;
+                    }
+                }
+            }
+            itr->second = effMask;
+            itr->first->_CreateAuraApplication(this, effMask);
             ++itr;
         }
     }
@@ -831,6 +935,8 @@ void Aura::RefreshDuration(bool withMods)
     if (!caster)
         return;
 
+    m_refreshTime = GameTime::GetGameTimeMS();
+
     if (withMods && caster)
     {
         int32 duration = m_spellInfo->GetMaxDuration();
@@ -941,11 +1047,20 @@ bool Aura::ModCharges(int32 num, AuraRemoveMode removeMode)
 
 void Aura::SetStackAmount(uint8 stackAmount)
 {
+    uint8 const oldStackAmount = m_stackAmount;
     m_stackAmount = stackAmount;
     Unit* caster = GetCaster();
 
     if (!caster)
+    {
+        // can't recalc without the caster (its bonuses would be lost), so scale the current amount instead
+        if (oldStackAmount && oldStackAmount != stackAmount)
+            for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
+                if (HasEffect(i))
+                    m_effects[i]->ChangeAmount(
+                        int32(int64(m_effects[i]->GetAmount()) * stackAmount / oldStackAmount), false, false);
         return;
+    }
 
     std::list<AuraApplication*> applications;
     GetApplicationList(applications);
@@ -1064,6 +1179,13 @@ bool Aura::CanBeSaved() const
         return false;
     }
 
+    // GameObject-cast auras have no caster guid (cleared in Aura::Create) and cannot
+    // be restored on login - do not save them
+    if (!GetCasterGUID())
+    {
+        return false;
+    }
+
     // Xinef: do not save channel auras
     if (GetSpellInfo()->IsChanneled())
     {
@@ -1166,7 +1288,8 @@ void Aura::SetLoadedState(int32 maxduration, int32 duration, int32 charges, uint
             m_effects[i]->SetCanBeRecalculated(recalculateMask & (1 << i));
             m_effects[i]->CalculatePeriodic(caster, false, true);
             m_effects[i]->CalculateSpellMod();
-            m_effects[i]->RecalculateAmount(caster);
+            if (caster)
+                m_effects[i]->RecalculateAmount(caster);
         }
 }
 
@@ -1398,10 +1521,9 @@ void Aura::HandleAuraSpecificMods(AuraApplication const* aurApp, Unit* caster, b
                     // Druid T8 Restoration 4P Bonus
                     if (caster->GetAuraEffectDummy(64760))
                     {
-                        uint32 damage = GetEffect(0)->GetAmount();
-                        damage = target->SpellHealingBonusTaken(caster, GetSpellInfo(), damage, DOT);
-
-                        int32 basepoints0 = damage;
+                        // 50% of an unmodified tick: 64801's own heal adds spell power (0.188),
+                        // Empowered Rejuvenation and healing done/taken mods once
+                        int32 basepoints0 = CalculatePct(GetSpellInfo()->Effects[EFFECT_0].CalcValue(caster), 50);
                         caster->CastCustomSpell(target, 64801, &basepoints0, nullptr, nullptr, true, nullptr, GetEffect(0));
                     }
                 }
@@ -2070,6 +2192,12 @@ bool Aura::CanStackWith(Aura const* existingAura) const
     // spell of same spell rank chain
     if (m_spellInfo->IsRankOf(existingSpellInfo) && !(m_spellInfo->SpellFamilyName == SPELLFAMILY_HUNTER && m_spellInfo->SpellFamilyFlags[1] & 0x80000000))
     {
+        // Each paladin's aura applies independently to group members (Aura Mastery and the
+        // improved-aura talents depend on the caster's own aura being applied); only the
+        // strongest keeps its effects on a shared target, see Aura::UpdateTargetMap.
+        if (!sameCaster && m_spellInfo->GetSpellSpecific() == SPELL_SPECIFIC_AURA)
+            return true;
+
         // don't allow passive area auras to stack
         if (m_spellInfo->IsMultiSlotAura() && !IsArea())
             return true;
@@ -2653,22 +2781,6 @@ bool Aura::CallScriptCheckEffectProcHandlers(AuraEffect const* aurEff, AuraAppli
         for (; effItr != effEndItr; ++effItr)
             if (effItr->IsEffectAffected(m_spellInfo, aurEff->GetEffIndex()))
                 result &= effItr->Call(*scritr, aurEff, eventInfo);
-
-        (*scritr)->_FinishScriptCall();
-    }
-
-    return result;
-}
-
-bool Aura::CallScriptAfterCheckProcHandlers(AuraApplication const* aurApp, ProcEventInfo& eventInfo, bool isTriggeredAtSpellProcEvent)
-{
-    bool result = isTriggeredAtSpellProcEvent;
-    for (std::list<AuraScript*>::iterator scritr = m_loadedScripts.begin(); scritr != m_loadedScripts.end(); ++scritr)
-    {
-        (*scritr)->_PrepareScriptCall(AURA_SCRIPT_HOOK_AFTER_CHECK_PROC, aurApp);
-        std::list<AuraScript::AfterCheckProcHandler>::iterator hookItrEnd = (*scritr)->DoAfterCheckProc.end(), hookItr = (*scritr)->DoAfterCheckProc.begin();
-        for (; hookItr != hookItrEnd; ++hookItr)
-            result &= hookItr->Call(*scritr, eventInfo, isTriggeredAtSpellProcEvent);
 
         (*scritr)->_FinishScriptCall();
     }

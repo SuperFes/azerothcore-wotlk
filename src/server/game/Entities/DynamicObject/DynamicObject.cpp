@@ -205,7 +205,7 @@ void DynamicObject::SetDuration(int32 newDuration)
 
 void DynamicObject::Delay(int32 delaytime)
 {
-    SetDuration(GetDuration() - delaytime);
+    SetDuration(std::max(GetDuration() - delaytime, 0));
 }
 
 void DynamicObject::SetAura(Aura* aura)
@@ -255,6 +255,12 @@ void DynamicObject::RemoveCasterViewpoint()
         }
         _oldFarsightGUID.Clear();
     }
+}
+
+uint32 DynamicObject::GetFaction() const
+{
+    ASSERT(_caster);
+    return _caster->GetFaction();
 }
 
 void DynamicObject::BindToCaster()

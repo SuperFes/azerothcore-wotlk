@@ -54,7 +54,6 @@ public:
 
     float GetNativeObjectScale() const override;
     void SetObjectScale(float scale) override;
-    void SetDisplayId(uint32 displayId, float displayScale = 1.f) override;
     void SetDisplayFromModel(uint32 modelIdx);
 
     void DisappearAndDie();
@@ -110,7 +109,7 @@ public:
 
     [[nodiscard]] bool HasMechanicTemplateImmunity(uint64 mask) const;
     // redefine Unit::IsImmunedToSpell
-    bool IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index, Unit const* caster = nullptr) const override;
+    bool IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index, WorldObject const* caster = nullptr) const override;
     // redefine Unit::IsImmunedToSpellEffect
     [[nodiscard]] bool isElite() const
     {
@@ -167,6 +166,7 @@ public:
     void AddSpellCooldown(uint32 spell_id, uint32 /*itemid*/, uint32 end_time, bool needSendToClient = false, bool forceSendToSpectator = false) override;
     [[nodiscard]] bool HasSpellCooldown(uint32 spell_id) const override;
     [[nodiscard]] uint32 GetSpellCooldown(uint32 spell_id) const;
+    void RemoveSpellCooldown(uint32 spell_id, bool update /* = false */);
     void ProhibitSpellSchool(SpellSchoolMask idSchoolMask, uint32 unTimeMs) override;
     [[nodiscard]] bool IsSpellProhibited(SpellSchoolMask idSchoolMask) const;
     void ClearProhibitedSpellTimers();
@@ -511,12 +511,15 @@ protected:
 
     Position m_homePosition;
     Position m_transportHomePosition;
+    Position LastMovementFlagsPos; // where UpdateMovementFlags() last ran while wandering (swim/fly flag refresh cadence)
 
     bool DisableReputationReward;
     bool DisableLootReward;
 
     CreatureTemplate const* m_creatureInfo;   // in difficulty mode > 0 can different from sObjectMgr->GetCreatureTemplate(GetEntry())
     CreatureData const* m_creatureData;
+    mutable uint32 CachedScriptId = 0;      // GetScriptId() cache
+    mutable uint32 CachedScriptIdEntry = 0; // GetEntry() the cache was resolved for (0 = unresolved)
 
     float m_detectionDistance;
     uint16 m_LootMode;  // bitmask, default LOOT_MODE_DEFAULT, determines what loot will be lootable
@@ -561,6 +564,7 @@ private:
     bool _damagedByPlayer;
     uint8 _highestPlayerAttackerLevel;
     bool _isCombatMovementAllowed;
+    float _nativeObjectScale = 1.0f; ///< DisplayScale of the native model, set in InitEntry
 };
 
 class AssistDelayEvent : public BasicEvent

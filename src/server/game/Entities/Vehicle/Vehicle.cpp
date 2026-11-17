@@ -28,9 +28,14 @@
 #include "Util.h"
 #include <algorithm>
 
+enum PowerDisplayIds
+{
+    POWER_DISPLAY_PYRITE = 41
+};
+
 Vehicle::Vehicle(Unit* unit, VehicleEntry const* vehInfo, uint32 creatureEntry) :
     _me(unit), _vehicleInfo(vehInfo), _usableSeatNum(0), _creatureEntry(creatureEntry), _status(STATUS_NONE),
-    _accessoriesInstalled(false)
+    _accessoriesInstalled(false), _boardableByPlayers(true)
 {
     for (uint32 i = 0; i < MAX_VEHICLE_SEATS; ++i)
     {
@@ -76,7 +81,14 @@ void Vehicle::Install()
     if (_me->IsCreature())
     {
         if (PowerDisplayEntry const* powerDisplay = sPowerDisplayStore.LookupEntry(_vehicleInfo->m_powerDisplayId))
+        {
             _me->setPowerType(Powers(powerDisplay->PowerType));
+
+            // Pyrite does not regenerate and is only refilled by scripted energizes,
+            // so the Salvaged Demolisher and its Mechanic Seat spawn with a full bar
+            if (_vehicleInfo->m_powerDisplayId == POWER_DISPLAY_PYRITE)
+                _me->SetPower(_me->getPowerType(), _me->GetMaxPower(_me->getPowerType()));
+        }
         else if (_me->IsClass(CLASS_ROGUE, CLASS_CONTEXT_ABILITY))
             _me->setPowerType(POWER_ENERGY);
     }
@@ -133,7 +145,7 @@ void Vehicle::Reset(bool evading /*= false*/)
     LOG_DEBUG("vehicles", "Vehicle::Reset: {}", _me->GetGUID().ToString());
     if (_me->IsPlayer())
     {
-        if (_usableSeatNum)
+        if (_usableSeatNum && _boardableByPlayers)
             _me->SetNpcFlag(UNIT_NPC_FLAG_PLAYER_VEHICLE);
     }
     else
@@ -148,6 +160,19 @@ void Vehicle::Reset(bool evading /*= false*/)
 
     if (GetBase()->IsCreature())
         sScriptMgr->OnReset(this);
+}
+
+void Vehicle::SetBoardableByPlayers(bool boardable)
+{
+    _boardableByPlayers = boardable;
+
+    if (!_me->IsPlayer())
+        return;
+
+    if (boardable && _usableSeatNum)
+        _me->SetNpcFlag(UNIT_NPC_FLAG_PLAYER_VEHICLE);
+    else
+        _me->RemoveNpcFlag(UNIT_NPC_FLAG_PLAYER_VEHICLE);
 }
 
 void Vehicle::ApplyAllImmunities()
@@ -381,7 +406,7 @@ bool Vehicle::AddPassenger(Unit* unit, int8 seatId)
         --_usableSeatNum;
         if (!_usableSeatNum)
             _me->RemoveNpcFlag(_me->IsPlayer() ? UNIT_NPC_FLAG_PLAYER_VEHICLE : UNIT_NPC_FLAG_SPELLCLICK);
-        else
+        else if (!_me->IsPlayer() || _boardableByPlayers)
             _me->SetNpcFlag(_me->IsPlayer() ?  UNIT_NPC_FLAG_PLAYER_VEHICLE : UNIT_NPC_FLAG_SPELLCLICK);
     }
 
@@ -494,7 +519,8 @@ void Vehicle::RemovePassenger(Unit* unit)
     LOG_DEBUG("vehicles", "Unit {} exit vehicle entry {} id {} ({}) seat {}",
         unit->GetName(), _me->GetEntry(), _vehicleInfo->m_ID, _me->GetGUID().ToString(), (int32)seat->first);
 
-    if (seat->second.SeatInfo->CanEnterOrExit() && ++_usableSeatNum)
+    if (seat->second.SeatInfo->CanEnterOrExit() && ++_usableSeatNum &&
+        (!_me->IsPlayer() || _boardableByPlayers))
         _me->SetNpcFlag((_me->IsPlayer() ? UNIT_NPC_FLAG_PLAYER_VEHICLE : UNIT_NPC_FLAG_SPELLCLICK));
 
     // Remove UNIT_FLAG_NOT_SELECTABLE if passenger did not have it before entering vehicle
@@ -587,12 +613,33 @@ bool Vehicle::IsControllableVehicle() const
 
 void Vehicle::TeleportVehicle(float x, float y, float z, float ang)
 {
-    _me->GetMap()->LoadGrid(x, y);
-    _me->NearTeleportTo(x, y, z, ang, true);
+    // Snapshot passenger GUIDs and cache the base BEFORE teleporting.
+    // Teleporting the base (Player::TeleportTo) may drop the mount/vehicle aura
+    // on a long hop (>100 yd) and call ExitVehicle() -> Unit::RemoveVehicleKit()
+    // -> delete m_vehicleKit, freeing THIS Vehicle (and its Seats) mid-call.
+    // Reading Seats after that is a use-after-free (see upstream PR #26116 review).
+    Unit* base = _me;
+    Vehicle* self = this;
+    std::vector<ObjectGuid> passengers;
+    passengers.reserve(Seats.size());
+    for (auto const& seat : Seats)
+        if (!seat.second.IsEmpty())
+            passengers.push_back(seat.second.Passenger.Guid);
 
-    for (SeatMap::const_iterator itr = Seats.begin(); itr != Seats.end(); ++itr)
-        if (Unit* passenger = ObjectAccessor::GetUnit(*GetBase(), itr->second.Passenger.Guid))
+    base->GetMap()->LoadGrid(x, y);
+    base->NearTeleportTo(x, y, z, ang, true, true); // vehicleTeleport=true: do not dismount base mid-call
+
+    // THIS Vehicle may have been deleted by the base teleport above (kit freed).
+    // If so, bail out - passengers were already ejected by ~Vehicle::Uninstall().
+    if (base->GetVehicleKit() != self)
+        return;
+
+    for (ObjectGuid const& guid : passengers)
+        if (Unit* passenger = ObjectAccessor::GetUnit(*base, guid))
         {
+            if (!passenger->IsInWorld())
+                continue;
+
             if (passenger->IsPlayer())
             {
                 passenger->ToPlayer()->SetMover(passenger);

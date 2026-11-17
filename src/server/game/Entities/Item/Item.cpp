@@ -362,14 +362,7 @@ void Item::SaveToDB(CharacterDatabaseTransaction trans)
 
                 stmt->SetData(++index, GetUInt32Value(ITEM_FIELD_FLAGS));
 
-                std::ostringstream ssEnchants;
-                for (uint8 i = 0; i < MAX_ENCHANTMENT_SLOT; ++i)
-                {
-                    ssEnchants << GetEnchantmentId(EnchantmentSlot(i)) << ' ';
-                    ssEnchants << GetEnchantmentDuration(EnchantmentSlot(i)) << ' ';
-                    ssEnchants << GetEnchantmentCharges(EnchantmentSlot(i)) << ' ';
-                }
-                stmt->SetData(++index, ssEnchants.str());
+                stmt->SetData(++index, GetEnchantmentsString());
 
                 stmt->SetData (++index, GetItemRandomPropertyId());
                 stmt->SetData(++index, GetUInt32Value(ITEM_FIELD_DURABILITY));
@@ -918,6 +911,18 @@ bool Item::IsFitToSpellRequirements(SpellInfo const* spellInfo) const
     return true;
 }
 
+std::string Item::GetEnchantmentsString() const
+{
+    std::ostringstream ssEnchants;
+    for (uint8 i = 0; i < MAX_ENCHANTMENT_SLOT; ++i)
+    {
+        ssEnchants << GetEnchantmentId(EnchantmentSlot(i)) << ' ';
+        ssEnchants << GetEnchantmentDuration(EnchantmentSlot(i)) << ' ';
+        ssEnchants << GetEnchantmentCharges(EnchantmentSlot(i)) << ' ';
+    }
+    return ssEnchants.str();
+}
+
 void Item::SetEnchantment(EnchantmentSlot slot, uint32 id, uint32 duration, uint32 charges, ObjectGuid caster /*= ObjectGuid::Empty*/)
 {
     // Better lost small time at check in comparison lost time at item save to DB.
@@ -1091,7 +1096,7 @@ void Item::SendTimeUpdate(Player* owner)
     owner->SendDirectMessage(&data);
 }
 
-Item* Item::CreateItem(uint32 item, uint32 count, Player const* player, bool clone, uint32 randomPropertyId, bool temp)
+Item* Item::CreateItem(uint32 item, uint32 count, Player const* player, bool clone, uint32 randomPropertyId)
 {
     if (count < 1)
         return nullptr;                                        //don't create item at zero count
@@ -1109,11 +1114,8 @@ Item* Item::CreateItem(uint32 item, uint32 count, Player const* player, bool clo
     if (sToCloud9Sidecar->IsCrossrealm() && player)
         realmId = player->GetGUID().GetRealmID();
 
-    // playerbots: temporary items get a sentinel guid instead of consuming one from the generator
-    uint32 guid = temp ? 0xFFFFFFFF : sObjectMgr->GetGenerator<HighGuid::Item>().Generate(realmId);
-
     Item* pItem = NewItemOrBag(pProto);
-    if (!pItem->Create(guid, item, player))
+    if (!pItem->Create(sObjectMgr->GetGenerator<HighGuid::Item>().Generate(realmId), item, player))
     {
         delete pItem;
         return nullptr;
@@ -1289,12 +1291,10 @@ void Item::ClearSoulboundTradeable(Player* currentOwner)
 
 bool Item::CheckSoulboundTradeExpire()
 {
-    // we have to check the owner for mod_playerbots since bots programically call methods like DestroyItem, 
-    // MoveItemToMail, DestroyItemCount which do not handle soulboundTradeable clearing.
     Player* owner = GetOwner();
     if (!owner)
-        return true; // remove from tradeable list
-    
+        return false; // retry later
+
     if (GetUInt32Value(ITEM_FIELD_CREATE_PLAYED_TIME) + 2 * HOUR < owner->GetTotalPlayedTime())
     {
         ClearSoulboundTradeable(owner);
