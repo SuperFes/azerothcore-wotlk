@@ -9,12 +9,16 @@ guidance in this file instead.
 
 ## What this repo is
 
-The **mod-playerbots fork** of AzerothCore (`mod-playerbots/azerothcore-wotlk`), not upstream AC.
+Our own fork (`SuperFes/azerothcore-wotlk`) of the **mod-playerbots fork** of AzerothCore, not upstream AC.
 
-- Default branch is `Playerbot` (the fork's "master"); `test-staging` is the pre-release branch. CI maps the core
-  branch to the module branch: `Playerbot` → mod-playerbots `master`, `test-staging` → `test-staging`.
-- `origin/master` tracks upstream AzerothCore and is merged in periodically. Most of `src/` is upstream code, so
-  keep fork edits minimal and localized — every line changed is a future merge conflict.
+- Default branch is `main`: mod-playerbots' `Playerbot` branch plus our own commits.
+- Sync by merging both sources into `main`, playerbots first:
+  - `playerbots` remote → `mod-playerbots/azerothcore-wotlk`, branch `Playerbot`
+  - `upstream` remote → `azerothcore/azerothcore-wotlk`, branch `master`
+- Most of `src/` is upstream code, so keep fork edits minimal and localized — every line changed is a future merge
+  conflict.
+- mod-playerbots' CI (`.github/workflows/core-build-playerbots.yml`) only triggers on `Playerbot`/`test-staging`
+  and maps `Playerbot` → module `master`, anything else → module `test-staging`; it does not run on `main`.
 
 ## modules/ is not part of this repository
 
